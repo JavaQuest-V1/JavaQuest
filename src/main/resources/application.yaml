@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: JavaQuest
+  config:
+    import: optional:file:.env[.properties]
+  datasource:
+    url: ${JAVAQUEST_DB_URL:jdbc:postgresql://db.ktksibdcggnpcyxgmfvf.supabase.co:5432/postgres?sslmode=require&prepareThreshold=0}
+    username: ${JAVAQUEST_DB_USERNAME:javaquest_app}
+    password: ${JAVAQUEST_DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: JavaQuestSupabasePool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1200000
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JAVAQUEST_SUPABASE_ISSUER_URI:https://ktksibdcggnpcyxgmfvf.supabase.co/auth/v1}
+          jwk-set-uri: ${JAVAQUEST_SUPABASE_JWKS_URI:https://ktksibdcggnpcyxgmfvf.supabase.co/auth/v1/.well-known/jwks.json}
+
+javaquest:
+  seguranca:
+    origens-cors-permitidas: ${JAVAQUEST_CORS_ORIGINS:http://localhost:3000}
