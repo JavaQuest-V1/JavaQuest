@@ -27,7 +27,7 @@ public class ValidacaoJavaService {
     private final GeradorInstanciaDesafioBlocos geradorInstanciaDesafioBlocos;
 
     public ValidacaoJavaService(GeradorInstanciaDesafioBlocos geradorInstanciaDesafioBlocos) {
-        this.geradorInstanciaDesafioBlocos =                                            Objects.requireNonNull(geradorInstanciaDesafioBlocos);
+        this.geradorInstanciaDesafioBlocos = Objects.requireNonNull(geradorInstanciaDesafioBlocos);
     }
 
     // roda fora da transacao do banco pra nn travar pool de conexao qnd tiver mt gente jogando
@@ -135,7 +135,8 @@ public class ValidacaoJavaService {
                         mensagemPrimeiroErro);
             }
 
-            List<AcaoHeroi> acoesHeroiNaArena = definicaoVarianteAtiva.resolverAcoesHeroiParaArmamento(codigoArmamentoDaRun);
+            List<AcaoHeroi> acoesHeroiNaArena = definicaoVarianteAtiva.resolverAcoesHeroiParaArmamento(
+                    codigoArmamentoDaRun, instanciaEsperada.valoresParametrosSorteados());
             return new ResultadoValidacaoBlocosJava(
                     ResultadoExecucaoSubmissao.CORRETA,
                     null,
@@ -144,7 +145,7 @@ public class ValidacaoJavaService {
                     acoesHeroiNaArena,
                     tempoExecucaoMs,
                     VERSAO_ATUAL_VALIDADOR_BLOCOS,
-                    "Codigo montado corretamente! O heroi executou o comando.");
+                    "Conceito aplicado: " + definicaoVarianteAtiva.tituloTemaPedagogico() + ". " + instanciaEsperada.visaoPublicaParaArena().enunciadoDesafioResolvido());
         } catch (RuntimeException erroInesperado) {
             // erro tecnico no validador nunca pode descontar vida do jogador (regra do adendo)
             long tempoExecucaoMs = Math.max(0L, Duration.between(instanteInicioValidacao, Instant.now()).toMillis());

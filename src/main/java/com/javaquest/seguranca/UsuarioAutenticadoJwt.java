@@ -12,7 +12,8 @@ public record UsuarioAutenticadoJwt(
         String nomeCompletoContaGoogle,
         String urlFotoPerfilGoogle,
         String provedorAutenticacao,
-        Instant instanteExpiracaoToken) {
+        Instant instanteExpiracaoToken,
+        UUID identificadorSessaoAutenticada) {
 
     // pega soh o sub (UUID) pra autorizacao e RLS; user_metadata serve soh pra sugerir nome/foto na tela
     public static UsuarioAutenticadoJwt extrairDeTokenJwt(Jwt tokenJwtValidado) {
@@ -44,7 +45,8 @@ public record UsuarioAutenticadoJwt(
                 nomeGoogle,
                 fotoGoogle,
                 provedorApp,
-                tokenJwtValidado.getExpiresAt());
+                tokenJwtValidado.getExpiresAt(),
+                UUID.fromString(tokenJwtValidado.getClaimAsString("session_id")));
     }
 
     // sugere o primeiro nome da conta Google no onboarding (RF-02)

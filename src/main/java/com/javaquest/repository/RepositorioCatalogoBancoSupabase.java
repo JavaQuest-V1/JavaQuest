@@ -1,5 +1,7 @@
-package com.javaquest.persistencia;
+package com.javaquest.repository;
 
+import com.javaquest.dominio.DefinicaoVarianteDesafioBlocos;
+import tools.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -14,7 +16,10 @@ public class RepositorioCatalogoBancoSupabase {
 
     private final NamedParameterJdbcTemplate templateJdbcNomeado;
 
-    public RepositorioCatalogoBancoSupabase(NamedParameterJdbcTemplate templateJdbcNomeado) {
+    private final ObjectMapper conversorJson;
+
+    public RepositorioCatalogoBancoSupabase(NamedParameterJdbcTemplate templateJdbcNomeado, ObjectMapper conversorJson) {
+        this.conversorJson = Objects.requireNonNull(conversorJson);
         this.templateJdbcNomeado = Objects.requireNonNull(templateJdbcNomeado);
     }
 
@@ -138,6 +143,22 @@ public class RepositorioCatalogoBancoSupabase {
                         rs.getString("scenario_json"),
                         rs.getBoolean("active")));
         return resultados.stream().findFirst();
+    }
+
+    public DefinicaoVarianteDesafioBlocos buscarDefinicaoDaTentativa(long identificadorDesafio, int numeroAndar) {
+        String consulta = """
+                SELECT (definicao_blocos || jsonb_build_object(
+                    'identificadorDesafioNoBanco', id, 'numeroAndarNaTorre', floor_number,
+                    'chaveVarianteNoAndar', variant_key, 'numeroRevisaoVariante', revision,
+                    'varianteAtivaNoCatalogo', active))::text
+                FROM javaquest.challenges
+                WHERE id=:desafio AND floor_number=:andar AND definicao_blocos IS NOT NULL
+                """;
+        var parametros = new MapSqlParameterSource("desafio", identificadorDesafio).addValue("andar", numeroAndar);
+        return templateJdbcNomeado.query(consulta, parametros, (registro, indice) ->
+                conversorJson.readValue(registro.getString(1), DefinicaoVarianteDesafioBlocos.class))
+                .stream().findFirst().orElseThrow(() -> new IllegalStateException(
+                        "Definicao de blocos ausente para o desafio " + identificadorDesafio + " no andar " + numeroAndar));
     }
 
     public record RegistroMetadadosDesafioBanco(

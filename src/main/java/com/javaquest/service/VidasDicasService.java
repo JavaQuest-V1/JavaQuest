@@ -1,8 +1,6 @@
 package com.javaquest.service;
 
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.util.Map;
 import java.util.Objects;
@@ -15,13 +13,10 @@ import tools.jackson.databind.JsonNode;
 public class VidasDicasService {
 
     private final ExecutorComandoBancoJogador executorComandoBancoJogador;
-    private final RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso;
 
     public VidasDicasService(
-            ExecutorComandoBancoJogador executorComandoBancoJogador,
-            RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso) {
+            ExecutorComandoBancoJogador executorComandoBancoJogador) {
         this.executorComandoBancoJogador = Objects.requireNonNull(executorComandoBancoJogador);
-        this.repositorioPerfilEProgresso = Objects.requireNonNull(repositorioPerfilEProgresso);
     }
 
     // cliente manda soh o submission_id; categoria do erro e limite de 3 dicas ficam 100% no server/banco
@@ -49,19 +44,19 @@ public class VidasDicasService {
             throw new IllegalStateException("Dica pedagogica nao retornada pelo banco para esta submissao.");
         }
 
-        int dicasRestantesAtualizadas = repositorioPerfilEProgresso
-                .buscarTentativaCicloAberta(identificadorJogador)
-                .map(RegistroTentativaCiclo::quantidadeDicasRestantes)
-                .orElse(0);
+        int dicasRestantesAtualizadas = respostaBanco.required("hints").asInt();
+        UUID identificadorCicloOrigem = UUID.fromString(respostaBanco.required("run_id").asString());
 
         return new ResultadoEntregaDicaPedagogica(
                 identificadorSubmissaoIncorreta,
+                identificadorCicloOrigem,
                 textoDicaPedagogica,
                 dicasRestantesAtualizadas);
     }
 
     public record ResultadoEntregaDicaPedagogica(
             UUID identificadorSubmissaoOrigem,
+            UUID identificadorTentativaCicloOrigem,
             String textoDicaPedagogica,
             int quantidadeDicasRestantesNaRun) {
     }

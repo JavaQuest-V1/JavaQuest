@@ -7,13 +7,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase.RegistroHistoricoCicloBanco;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase.RegistroHistoricoCicloBanco;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -42,7 +42,7 @@ class MetricasEDashboardServiceTest {
         this.metricasService = new MetricasService(metricasRepoMock, perfilRepoMock, catalogoRepoMock);
         this.usuarioTeste = new UsuarioAutenticadoJwt(
                 JOGADOR_ID, "marcos@test.com", "Marcos Vinicius", "https://foto.test/m.png",
-                "google", Instant.now().plusSeconds(3600));
+                "google", Instant.now().plusSeconds(3600), UUID.randomUUID());
     }
 
     @Test

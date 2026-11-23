@@ -1,6 +1,8 @@
 package com.javaquest.dominio;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 // receita completa de uma variante de desafio em blocos (fica soh no backend)
 public record DefinicaoVarianteDesafioBlocos(
@@ -16,17 +18,40 @@ public record DefinicaoVarianteDesafioBlocos(
         List<DefinicaoParametroAleatorio> parametrosAleatoriosDaVariante,
         List<TipoAcaoHeroi> acoesHeroiComEspada,
         List<TipoAcaoHeroi> acoesHeroiComCajado,
-        boolean varianteAtivaNoCatalogo) {
+        boolean varianteAtivaNoCatalogo,
+        String parametroQuantidadeAtaques,
+        List<String> parametrosAtaquesCondicionais,
+        Integer valorMinimoAtaque) {
 
-    // pega as acoes certas de acordo com a arma travada na run (espada aproxima e bate, cajado ataca de longe)
-    public List<AcaoHeroi> resolverAcoesHeroiParaArmamento(String codigoArmamentoDaRun) {
-        List<TipoAcaoHeroi> listaTiposAcoes = "STAFF".equalsIgnoreCase(codigoArmamentoDaRun)
-                || "CAJADO".equalsIgnoreCase(codigoArmamentoDaRun)
-                ? acoesHeroiComCajado
-                : acoesHeroiComEspada;
+    public List<AcaoHeroi> resolverAcoesHeroiParaArmamento(
+            String codigoArmamentoDaRun, Map<String, String> valoresSorteados) {
+        List<TipoAcaoHeroi> tiposDeAcao = switch (codigoArmamentoDaRun) {
+            case "STAFF", "CAJADO" -> acoesHeroiComCajado;
+            case "SWORD", "ESPADA" -> acoesHeroiComEspada;
+            default -> throw new IllegalArgumentException("Armamento desconhecido: " + codigoArmamentoDaRun);
+        };
+        int quantidadeAtaques = calcularQuantidadeAtaques(valoresSorteados);
+        List<AcaoHeroi> acoes = new ArrayList<>();
+        for (TipoAcaoHeroi tipo : tiposDeAcao) {
+            int repeticoes = tipo == TipoAcaoHeroi.ATACAR ? quantidadeAtaques : 1;
+            for (int indice = 0; indice < repeticoes; indice++) {
+                acoes.add(new AcaoHeroi(tipo));
+            }
+        }
+        return List.copyOf(acoes);
+    }
 
-        return listaTiposAcoes.stream()
-                .map(AcaoHeroi::new)
-                .toList();
+    private int calcularQuantidadeAtaques(Map<String, String> valoresSorteados) {
+        if (parametroQuantidadeAtaques != null) {
+            return Integer.parseInt(valoresSorteados.get(parametroQuantidadeAtaques));
+        }
+        if (parametrosAtaquesCondicionais == null) {
+            return 1;
+        }
+        return Math.toIntExact(parametrosAtaquesCondicionais.stream()
+                .map(valoresSorteados::get)
+                .mapToInt(Integer::parseInt)
+                .filter(valor -> valor >= valorMinimoAtaque)
+                .count());
     }
 }

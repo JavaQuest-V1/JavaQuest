@@ -1,4 +1,4 @@
-package com.javaquest.persistencia;
+package com.javaquest.repository;
 
 import java.time.OffsetDateTime;
 import java.util.List;

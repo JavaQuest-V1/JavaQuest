@@ -13,17 +13,18 @@ import static org.mockito.Mockito.when;
 import com.javaquest.dominio.CanalAquisicao;
 import com.javaquest.dominio.NivelExperiencia;
 import com.javaquest.dominio.TipoArmamentoHeroi;
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroArmamentoCatalogo2D;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroArmamentoCatalogo2D;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import com.javaquest.seguranca.ValidadorClaimsTokenSupabase;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import com.javaquest.repository.RepositorioSessoesAutenticadas;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +41,20 @@ class ValidacaoSegurancaEAutenticacaoTest {
     private static final UUID JOGADOR_TESTE_ID = UUID.fromString("12345678-1234-4123-8123-1234567890ab");
 
     @Test
+    void deveRejeitarOutraIdentidadeVinculadaESessaoEncerrada() {
+        var sessoes = mock(RepositorioSessoesAutenticadas.class);
+        var validador = new ValidadorClaimsTokenSupabase(true, sessoes);
+        Jwt vinculado = criarJwtMock(JOGADOR_TESTE_ID.toString(), List.of("authenticated"), "authenticated",
+                Map.of("provider", "google", "providers", List.of("google", "email")), Map.of());
+        assertTrue(validador.validate(vinculado).hasErrors());
+        Jwt encerrado = criarJwtMock(JOGADOR_TESTE_ID.toString(), List.of("authenticated"), "authenticated",
+                Map.of("provider", "google"), Map.of());
+        when(sessoes.sessaoEncerrada(JOGADOR_TESTE_ID, UUID.fromString(encerrado.getClaimAsString("session_id"))))
+                .thenReturn(true);
+        assertTrue(validador.validate(encerrado).hasErrors());
+    }
+
+    @Test
     void deveAceitarJwtValidoDoSupabaseComProvedorGoogle() {
         Jwt jwtValidoGoogle = criarJwtMock(
                 JOGADOR_TESTE_ID.toString(),
@@ -48,7 +63,7 @@ class ValidacaoSegurancaEAutenticacaoTest {
                 Map.of("provider", "google", "providers", List.of("google")),
                 Map.of("full_name", "Marcos Vinicius", "avatar_url", "https://foto.test/avatar.png"));
 
-        ValidadorClaimsTokenSupabase validador = new ValidadorClaimsTokenSupabase(true);
+        ValidadorClaimsTokenSupabase validador = new ValidadorClaimsTokenSupabase(true, mock(RepositorioSessoesAutenticadas.class));
         OAuth2TokenValidatorResult resultado = validador.validate(jwtValidoGoogle);
 
         assertFalse(resultado.hasErrors());
@@ -61,7 +76,7 @@ class ValidacaoSegurancaEAutenticacaoTest {
 
     @Test
     void deveRejeitarJwtQueNaoSejaGoogleOuQueTenhaRoleAnonOuAudienciaErrada() {
-        ValidadorClaimsTokenSupabase validadorEstrito = new ValidadorClaimsTokenSupabase(true);
+        ValidadorClaimsTokenSupabase validadorEstrito = new ValidadorClaimsTokenSupabase(true, mock(RepositorioSessoesAutenticadas.class));
 
         // bloqueia login por email/senha (viola RF-01 e RNF-10)
         Jwt jwtEmailSenha = criarJwtMock(
@@ -114,19 +129,21 @@ class ValidacaoSegurancaEAutenticacaoTest {
                 JOGADOR_TESTE_ID, null, null, null, "HERO_DEFAULT_2D", null, null, 1);
 
         when(perfilRepoMock.buscarPerfilComProgresso(JOGADOR_TESTE_ID))
-                .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(perfilRecemCriado));
         when(executorMock.executarComandoIdempotente(eq(JOGADOR_TESTE_ID), eq(chaveIdempotencia), eq("register"), any()))
-                .thenReturn(new ObjectMapper().createObjectNode());
+                .thenReturn(new ObjectMapper().createObjectNode().put("created", true));
         when(metricasRepoMock.abrirOuRecuperarSessaoEstudo(JOGADOR_TESTE_ID)).thenReturn(sessaoEstudoId);
         when(catalogoRepoMock.buscarAparenciaPadraoHeroi()).thenReturn(Optional.of(
                 new RegistroAparenciaHeroi2D("HERO_DEFAULT_2D", "Aprendiz Java", null, 32, 32, "{}")));
 
         AutenticacaoService autenticacaoService = new AutenticacaoService(
-                executorMock, perfilRepoMock, catalogoRepoMock, metricasRepoMock);
+                executorMock, perfilRepoMock, catalogoRepoMock, metricasRepoMock,
+                new MetricasService(metricasRepoMock, perfilRepoMock, catalogoRepoMock), mock(RepositorioSessoesAutenticadas.class));
+        when(metricasRepoMock.buscarMetricasConsolidadas(JOGADOR_TESTE_ID)).thenReturn(Optional.of(
+                new RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador(JOGADOR_TESTE_ID, 0, 0, 0, 0, 0)));
 
         UsuarioAutenticadoJwt usuario = new UsuarioAutenticadoJwt(
-                JOGADOR_TESTE_ID, "marcos@test.com", "Marcos Vinicius", "https://foto.test/a.png", "google", Instant.now().plusSeconds(3600));
+                JOGADOR_TESTE_ID, "marcos@test.com", "Marcos Vinicius", "https://foto.test/a.png", "google", Instant.now().plusSeconds(3600), UUID.randomUUID());
 
         AutenticacaoService.ResultadoSincronizacaoGoogle resposta =
                 autenticacaoService.sincronizarSessaoComGoogle(usuario, chaveIdempotencia);
@@ -163,7 +180,7 @@ class ValidacaoSegurancaEAutenticacaoTest {
 
         JogadorService jogadorService = new JogadorService(executorMock, perfilRepoMock, catalogoRepoMock);
         UsuarioAutenticadoJwt usuario = new UsuarioAutenticadoJwt(
-                JOGADOR_TESTE_ID, "marcos@test.com", "Marcos Vinicius", null, "google", Instant.now().plusSeconds(3600));
+                JOGADOR_TESTE_ID, "marcos@test.com", "Marcos Vinicius", null, "google", Instant.now().plusSeconds(3600), UUID.randomUUID());
 
         JogadorService.PerfilCompletoJogador perfilSalvo = jogadorService.concluirOnboardingJogador(
                 usuario,
@@ -207,6 +224,7 @@ class ValidacaoSegurancaEAutenticacaoTest {
         return Jwt.withTokenValue("token-simulado")
                 .header("alg", "ES256")
                 .subject(sub)
+                .claim("session_id", UUID.randomUUID().toString())
                 .issuer("https://ktksibdcggnpcyxgmfvf.supabase.co/auth/v1")
                 .audience(audiencias)
                 .issuedAt(Instant.now().minusSeconds(10))

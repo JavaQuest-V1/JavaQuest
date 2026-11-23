@@ -1,4 +1,4 @@
-package com.javaquest.persistencia;
+package com.javaquest.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

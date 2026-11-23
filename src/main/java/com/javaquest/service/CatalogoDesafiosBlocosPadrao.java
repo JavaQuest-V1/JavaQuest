@@ -577,7 +577,7 @@ public class CatalogoDesafiosBlocosPadrao implements ProvedorCatalogoDesafiosBlo
 
         registrarVariante(
                 TemaAndarCiclo.ANDAR_10_BOSS_TODOS_OS_TEMAS, "v2",
-                "BOSS FINAL: Trate o comando no switch, percorra o array de runas e finalize o Chefe com while!",
+                "BOSS FINAL: Selecione GOLPE no switch e ataque enquanto houver turnos.",
                 "String comando = entrada.trim().toUpperCase();\n{{LACUNA_1}} (comando) {\n    case \"GOLPE\":\n        int turnos = {{TURNOS_BOSS}};\n        {{LACUNA_2}} (turnos > 0) {\n            heroi.atacar(bonusAtivo ? 20 {{LACUNA_3}} 10);\n            {{LACUNA_4}};\n        }\n        break;\n}",
                 List.of(
                         new DefinicaoLacunaCodigo("LACUNA_1", CategoriaErro.SINTAXE, List.of("switch")),
@@ -597,7 +597,7 @@ public class CatalogoDesafiosBlocosPadrao implements ProvedorCatalogoDesafiosBlo
 
         registrarVariante(
                 TemaAndarCiclo.ANDAR_10_BOSS_TODOS_OS_TEMAS, "v3",
-                "BOSS FINAL: Combine Scanner, array tipado, condicional e laco for para quebrar o escudo do Chefe!",
+                "BOSS FINAL: Combine Scanner, array tipado, condicional e laco for para quebrar o escudo do Chefe! O Scanner recebe 15 como limite minimo.",
                 "int minimo = leitor.{{LACUNA_1}};\n{{LACUNA_2}} ataques = { {{ATAQUE_1}}, {{ATAQUE_2}}, {{ATAQUE_3}} };\nfor (int i = 0; i < ataques.{{LACUNA_3}}; i++) {\n    if (ataques[i] >= minimo) {\n        {{LACUNA_4}};\n    }\n}",
                 List.of(
                         new DefinicaoLacunaCodigo("LACUNA_1", CategoriaErro.METODO, List.of("nextInt()")),
@@ -617,6 +617,12 @@ public class CatalogoDesafiosBlocosPadrao implements ProvedorCatalogoDesafiosBlo
                         new DefinicaoParametroAleatorio("ATAQUE_1", List.of("8", "10")),
                         new DefinicaoParametroAleatorio("ATAQUE_2", List.of("15", "18")),
                         new DefinicaoParametroAleatorio("ATAQUE_3", List.of("22", "25"))));
+    }
+
+    private String marcadorQuantidadeAtaques(List<DefinicaoParametroAleatorio> parametros) {
+        return parametros.stream().map(DefinicaoParametroAleatorio::nomeMarcadorParametro)
+                .filter(List.of("QTD_GOLPES", "ENERGIA_INICIAL", "TURNOS_BOSS")::contains)
+                .findFirst().orElse(null);
     }
 
     private void registrarVariante(
@@ -641,7 +647,11 @@ public class CatalogoDesafiosBlocosPadrao implements ProvedorCatalogoDesafiosBlo
                 parametrosAleatorios,
                 ACOES_PADRAO_ESPADA,
                 ACOES_PADRAO_CAJADO,
-                true);
+                true,
+                marcadorQuantidadeAtaques(parametrosAleatorios),
+                temaAndar.getNumeroAndarNaTorre() == 10 && "v3".equals(chaveVarianteNoAndar)
+                        ? List.of("ATAQUE_1", "ATAQUE_2", "ATAQUE_3") : null,
+                temaAndar.getNumeroAndarNaTorre() == 10 && "v3".equals(chaveVarianteNoAndar) ? 15 : null);
 
         mapaVariantesPorAndar
                 .computeIfAbsent(temaAndar.getNumeroAndarNaTorre(), chave -> new ArrayList<>())

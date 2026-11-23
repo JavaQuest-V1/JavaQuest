@@ -1,13 +1,13 @@
 package com.javaquest.service;
 
 import com.javaquest.dominio.TipoArmamentoHeroi;
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAndarCatalogo;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroCicloCatalogo;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroAndarCatalogo;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroCicloCatalogo;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -43,7 +43,7 @@ public class CheckpointService {
         return numeroAndarNaTorre > 0 && ((numeroAndarNaTorre - 1) % QUANTIDADE_ANDARES_POR_CICLO == 0);
     }
 
-    public int calcularAndarCheckpointDoCiclo(int numeroCicloInformado) {
+    public static int calcularAndarCheckpointDoCiclo(int numeroCicloInformado) {
         if (numeroCicloInformado <= 0) {
             throw new IllegalArgumentException("Numero do ciclo precisa ser maior que zero.");
         }
@@ -77,10 +77,11 @@ public class CheckpointService {
         boolean maiorCicloEstaPublicado = false;
         for (RegistroCicloCatalogo cicloAtual : ciclosNoBanco) {
             boolean desbloqueado = cicloAtual.numeroCiclo() <= maiorCicloLiberado;
-            boolean publicado = cicloAtual.cicloEstaPublicado();
-            boolean disponivelParaJogar = desbloqueado && publicado;
+            if (!cicloAtual.cicloEstaPublicado()) {
+                continue;
+            }
 
-            if (cicloAtual.numeroCiclo() == maiorCicloLiberado && publicado) {
+            if (cicloAtual.numeroCiclo() == maiorCicloLiberado) {
                 maiorCicloEstaPublicado = true;
             }
 
@@ -94,8 +95,8 @@ public class CheckpointService {
                     cicloAtual.andarFinal(),
                     calcularAndarCheckpointDoCiclo(cicloAtual.numeroCiclo()),
                     desbloqueado,
-                    publicado,
-                    disponivelParaJogar,
+                    true,
+                    desbloqueado,
                     andaresDoCiclo));
         }
 
@@ -197,6 +198,12 @@ public class CheckpointService {
             UsuarioAutenticadoJwt usuarioAutenticado,
             UUID chaveIdempotenciaRequisicao,
             UUID identificadorTentativaCiclo) {
+        return abandonarTentativaCiclo(usuarioAutenticado, chaveIdempotenciaRequisicao, identificadorTentativaCiclo, null);
+    }
+
+    public ResultadoAbandonoCiclo abandonarTentativaCiclo(
+            UsuarioAutenticadoJwt usuarioAutenticado, UUID chaveIdempotenciaRequisicao,
+            UUID identificadorTentativaCiclo, MetricasService.DadosEventoTempoEstudo intervaloFinal) {
         Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
         Objects.requireNonNull(identificadorTentativaCiclo, "O id da tentativa de ciclo eh obrigatorio.");
 
@@ -204,7 +211,11 @@ public class CheckpointService {
                 ? chaveIdempotenciaRequisicao
                 : UUID.randomUUID();
 
-        Map<String, Object> payloadAbandono = Map.of("run_id", identificadorTentativaCiclo.toString());
+        Map<String, Object> payloadAbandono = new LinkedHashMap<>();
+        payloadAbandono.put("run_id", identificadorTentativaCiclo.toString());
+        if (intervaloFinal != null) {
+            payloadAbandono.put("study_interval", intervaloFinal.paraComandoBanco());
+        }
 
         JsonNode respostaBanco = executorComandoBancoJogador.executarComandoIdempotente(
                 usuarioAutenticado.identificadorUnicoJogador(),

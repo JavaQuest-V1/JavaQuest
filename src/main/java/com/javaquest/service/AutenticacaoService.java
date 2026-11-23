@@ -1,15 +1,18 @@
 package com.javaquest.service;
 
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
+import com.javaquest.repository.RepositorioSessoesAutenticadas;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +20,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class AutenticacaoService {
 
+    private final RepositorioSessoesAutenticadas sessoesAutenticadas;
+    private final MetricasService metricasService;
     private final ExecutorComandoBancoJogador executorComandoBancoJogador;
     private final RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso;
     private final RepositorioCatalogoBancoSupabase repositorioCatalogoBanco;
@@ -26,7 +31,10 @@ public class AutenticacaoService {
             ExecutorComandoBancoJogador executorComandoBancoJogador,
             RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso,
             RepositorioCatalogoBancoSupabase repositorioCatalogoBanco,
-            RepositorioMetricasEstudoSupabase repositorioMetricasEstudo) {
+            RepositorioMetricasEstudoSupabase repositorioMetricasEstudo,
+            MetricasService metricasService, RepositorioSessoesAutenticadas sessoesAutenticadas) {
+        this.sessoesAutenticadas = Objects.requireNonNull(sessoesAutenticadas);
+        this.metricasService = Objects.requireNonNull(metricasService);
         this.executorComandoBancoJogador = Objects.requireNonNull(executorComandoBancoJogador);
         this.repositorioPerfilEProgresso = Objects.requireNonNull(repositorioPerfilEProgresso);
         this.repositorioCatalogoBanco = Objects.requireNonNull(repositorioCatalogoBanco);
@@ -43,17 +51,8 @@ public class AutenticacaoService {
                 : UUID.randomUUID();
         UUID identificadorJogador = usuarioAutenticado.identificadorUnicoJogador();
 
-        // checa antes se o jogador ja tinha cadastro pra avisar o front se eh primeiro acesso
-        Optional<RegistroPerfilComProgresso> perfilExistenteAntes =
-                repositorioPerfilEProgresso.buscarPerfilComProgresso(identificadorJogador);
-        boolean primeiroAcessoJogador = perfilExistenteAntes.isEmpty();
-
-        // register eh idempotente no banco (cria players com HERO_DEFAULT_2D e player_progress no ciclo 1)
-        executorComandoBancoJogador.executarComandoIdempotente(
-                identificadorJogador,
-                chaveSegura,
-                "register",
-                Map.of());
+        boolean primeiroAcessoJogador = executorComandoBancoJogador.executarComandoIdempotente(
+                identificadorJogador, chaveSegura, "register", Map.of()).required("created").asBoolean();
 
         // abre ou recupera a sessao unica de estudo ativa pro cronometro (RF-24)
         UUID identificadorSessaoEstudoAtiva =
@@ -82,20 +81,24 @@ public class AutenticacaoService {
                 apelidoSugeridoPrimeiroNome,
                 identificadorSessaoEstudoAtiva,
                 perfilAtualizado,
-                aparenciaPadrao2D);
+                aparenciaPadrao2D,
+                repositorioPerfilEProgresso.buscarTentativaCicloAberta(identificadorJogador).orElse(null),
+                repositorioMetricasEstudo.buscarMetricasConsolidadas(identificadorJogador)
+                        .orElseThrow(() -> new IllegalStateException("Metricas do perfil registrado indisponiveis.")));
     }
 
-    // RF-05: fecha a sessao de estudo no banco; a revogacao do token acontece no cliente via Supabase Auth
+    @Transactional
     public void encerrarSessaoJogador(
             UsuarioAutenticadoJwt usuarioAutenticado,
             UUID identificadorSessaoEstudoAtiva) {
-        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado pelo JWT eh obrigatorio.");
-        if (identificadorSessaoEstudoAtiva == null) {
-            return;
-        }
-        repositorioMetricasEstudo.encerrarSessaoEstudo(
-                usuarioAutenticado.identificadorUnicoJogador(),
-                identificadorSessaoEstudoAtiva);
+        encerrarSessaoJogador(usuarioAutenticado, identificadorSessaoEstudoAtiva, null);
+    }
+
+    @Transactional
+    public void encerrarSessaoJogador(UsuarioAutenticadoJwt usuarioAutenticado, UUID identificadorSessaoEstudoAtiva,
+            MetricasService.DadosEventoTempoEstudo intervaloFinal) {
+        metricasService.encerrarSessaoEstudo(usuarioAutenticado, identificadorSessaoEstudoAtiva, intervaloFinal);
+        sessoesAutenticadas.encerrar(usuarioAutenticado.identificadorUnicoJogador(), usuarioAutenticado.identificadorSessaoAutenticada());
     }
 
     private String limitarSugestaoApelido(String sugestaoBruta) {
@@ -119,6 +122,8 @@ public class AutenticacaoService {
             String apelidoSugerido,
             UUID identificadorSessaoEstudoAtiva,
             RegistroPerfilComProgresso perfilComProgresso,
-            RegistroAparenciaHeroi2D aparenciaPadrao2D) {
+            RegistroAparenciaHeroi2D aparenciaPadrao2D,
+            RegistroTentativaCiclo tentativaAtiva,
+            RegistroMetricasConsolidadasJogador metricas) {
     }
 }

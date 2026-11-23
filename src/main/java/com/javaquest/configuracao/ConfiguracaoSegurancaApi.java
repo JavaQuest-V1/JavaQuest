@@ -1,6 +1,7 @@
 package com.javaquest.configuracao;
 
 import com.javaquest.seguranca.ValidadorClaimsTokenSupabase;
+import com.javaquest.repository.RepositorioSessoesAutenticadas;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,7 +57,7 @@ public class ConfiguracaoSegurancaApi {
 
     // o projeto Supabase atual assina JWT com ES256 (EC P-256), ent precisa liberar ES256 alem de RS256 no Nimbus
     @Bean
-    public JwtDecoder decodificadorJwtSupabase() {
+    public JwtDecoder decodificadorJwtSupabase(RepositorioSessoesAutenticadas sessoesAutenticadas) {
         NimbusJwtDecoder decodificadorNimbus = NimbusJwtDecoder.withJwkSetUri(urlJwksSupabase)
                 .jwsAlgorithms(algoritmosPermitidos -> {
                     algoritmosPermitidos.add(SignatureAlgorithm.ES256);
@@ -67,7 +68,7 @@ public class ConfiguracaoSegurancaApi {
         OAuth2TokenValidator<Jwt> validadorPadraoComEmissor =
                 JwtValidators.createDefaultWithIssuer(emissorJwtSupabase);
         OAuth2TokenValidator<Jwt> validadorClaimsSupabase =
-                new ValidadorClaimsTokenSupabase(exigirProvedorGoogle);
+                new ValidadorClaimsTokenSupabase(exigirProvedorGoogle, sessoesAutenticadas);
 
         decodificadorNimbus.setJwtValidator(
                 new DelegatingOAuth2TokenValidator<>(validadorPadraoComEmissor, validadorClaimsSupabase));

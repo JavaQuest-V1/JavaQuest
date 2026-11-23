@@ -16,14 +16,13 @@ import com.javaquest.dominio.DefinicaoVarianteDesafioBlocos;
 import com.javaquest.dominio.RespostaBlocosEnviadaJogador;
 import com.javaquest.dominio.ResultadoExecucaoSubmissao;
 import com.javaquest.dominio.TipoAcaoHeroi;
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroInimigoAndar;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroMetadadosDesafioBanco;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaAndar;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroInimigoAndar;
+import com.javaquest.dominio.ResultadoValidacaoBlocosJava;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaAndar;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -70,10 +69,13 @@ class CombateEDicasSupabaseServiceTest {
                 executorMock,
                 catalogoBancoMock,
                 perfilRepoMock);
-        this.vidasDicasService = new VidasDicasService(executorMock, perfilRepoMock);
+        this.vidasDicasService = new VidasDicasService(executorMock);
         this.usuarioTeste = new UsuarioAutenticadoJwt(
-                JOGADOR_ID, "marcos@test.com", "Marcos", null, "google", Instant.now().plusSeconds(3600));
+                JOGADOR_ID, "marcos@test.com", "Marcos", null, "google", Instant.now().plusSeconds(3600), UUID.randomUUID());
         this.conversorJson = new ObjectMapper();
+        when(executorMock.lerValidacaoConfirmada(any())).thenAnswer(chamada ->
+                conversorJson.treeToValue(chamada.<tools.jackson.databind.JsonNode>getArgument(0).required("validation"),
+                        ResultadoValidacaoBlocosJava.class));
     }
 
     @Test
@@ -85,8 +87,8 @@ class CombateEDicasSupabaseServiceTest {
         when(executorMock.executarComandoIdempotente(eq(JOGADOR_ID), eq(chaveIdempotencia), eq("start_floor"), any()))
                 .thenReturn(conversorJson.readTree(
                         "{\"attempt_id\":\"" + attemptId + "\",\"challenge_id\":2,\"floor\":1}"));
-        when(catalogoBancoMock.buscarMetadadosDesafioPorId(2L)).thenReturn(Optional.of(
-                new RegistroMetadadosDesafioBanco(2L, 1, "v2", 1, "Enunciado banco", "{}", true)));
+        when(catalogoBancoMock.buscarDefinicaoDaTentativa(2L, 1)).thenReturn(
+                catalogoBlocos.buscarVariantePorAndarEChave(1, "v2").orElseThrow());
         when(catalogoBancoMock.listarInimigosPorAndar(1)).thenReturn(List.of(
                 new RegistroInimigoAndar(1L, "Guardiao dos fundamentos", false, null, "{}", 1)));
         when(perfilRepoMock.buscarTentativaCicloPorId(JOGADOR_ID, runId)).thenReturn(Optional.of(
@@ -120,13 +122,16 @@ class CombateEDicasSupabaseServiceTest {
                 new RegistroTentativaAndar(attemptId, JOGADOR_ID, runId, 1, 10, 28L, "ACTIVE", OffsetDateTime.now(), null)));
         when(perfilRepoMock.buscarTentativaCicloPorId(JOGADOR_ID, runId)).thenReturn(Optional.of(
                 new RegistroTentativaCiclo(runId, JOGADOR_ID, 1, "SWORD", "ACTIVE", 10, 2, 1, OffsetDateTime.now(), null)));
-        when(perfilRepoMock.buscarPerfilComProgresso(JOGADOR_ID)).thenReturn(Optional.of(
-                new RegistroPerfilComProgresso(JOGADOR_ID, "Marcos", "INICIANTE", "YOUTUBE", "HERO_DEFAULT_2D", "SWORD", OffsetDateTime.now(), 1)));
-        when(catalogoBancoMock.buscarMetadadosDesafioPorId(28L)).thenReturn(Optional.of(
-                new RegistroMetadadosDesafioBanco(28L, 10, "v1", 1, "Boss", "{}", true)));
+        when(catalogoBancoMock.buscarDefinicaoDaTentativa(28L, 10)).thenReturn(
+                catalogoBlocos.buscarVariantePorAndarEChave(10, "v1").orElseThrow());
         when(executorMock.executarComandoIdempotente(eq(JOGADOR_ID), eq(chaveIdempotencia), eq("submit"), any()))
-                .thenReturn(conversorJson.readTree(
-                        "{\"submission_id\":\"" + submissionId + "\",\"status\":\"WON\",\"floor\":10,\"lives\":2,\"hints\":1,\"highest_unlocked_cycle\":2}"));
+                .thenAnswer(chamada -> {
+                    Map<String, Object> payload = chamada.getArgument(3);
+                    var resposta = (tools.jackson.databind.node.ObjectNode) conversorJson.readTree("{\"submission_id\":\"" + submissionId + "\",\"status\":\"WON\",\"floor\":10,\"lives\":2,\"hints\":1,\"highest_unlocked_cycle\":2}");
+                    resposta.put("checkpoint_unlocked", "WON".equals(resposta.required("status").asString()));
+                    resposta.set("validation", conversorJson.valueToTree(payload.get("validation")));
+                    return resposta;
+                });
 
         RespostaBlocosEnviadaJogador respostaCorreta = montarRespostaCorreta(varianteChefe10, attemptId);
 
@@ -182,13 +187,16 @@ class CombateEDicasSupabaseServiceTest {
                 new RegistroTentativaAndar(attemptId, JOGADOR_ID, runId, 1, 1, 1L, "ACTIVE", OffsetDateTime.now(), null)));
         when(perfilRepoMock.buscarTentativaCicloPorId(JOGADOR_ID, runId)).thenReturn(Optional.of(
                 new RegistroTentativaCiclo(runId, JOGADOR_ID, 1, "STAFF", "ACTIVE", 1, 3, 3, OffsetDateTime.now(), null)));
-        when(perfilRepoMock.buscarPerfilComProgresso(JOGADOR_ID)).thenReturn(Optional.of(
-                new RegistroPerfilComProgresso(JOGADOR_ID, "Marcos", "INICIANTE", "YOUTUBE", "HERO_DEFAULT_2D", "STAFF", OffsetDateTime.now(), 1)));
-        when(catalogoBancoMock.buscarMetadadosDesafioPorId(1L)).thenReturn(Optional.of(
-                new RegistroMetadadosDesafioBanco(1L, 1, "v1", 1, "Variaveis", "{}", true)));
+        when(catalogoBancoMock.buscarDefinicaoDaTentativa(1L, 1)).thenReturn(
+                catalogoBlocos.buscarVariantePorAndarEChave(1, "v1").orElseThrow());
         when(executorMock.executarComandoIdempotente(eq(JOGADOR_ID), eq(chaveSubmit), eq("submit"), any()))
-                .thenReturn(conversorJson.readTree(
-                        "{\"submission_id\":\"" + submissionId + "\",\"status\":\"ACTIVE\",\"floor\":1,\"lives\":2,\"hints\":3,\"highest_unlocked_cycle\":1}"));
+                .thenAnswer(chamada -> {
+                    Map<String, Object> payload = chamada.getArgument(3);
+                    var resposta = (tools.jackson.databind.node.ObjectNode) conversorJson.readTree("{\"submission_id\":\"" + submissionId + "\",\"status\":\"ACTIVE\",\"floor\":1,\"lives\":2,\"hints\":3,\"highest_unlocked_cycle\":1}");
+                    resposta.put("checkpoint_unlocked", "WON".equals(resposta.required("status").asString()));
+                    resposta.set("validation", conversorJson.valueToTree(payload.get("validation")));
+                    return resposta;
+                });
 
         CombateService.ResultadoSubmissaoArenaSupabase resultadoErro =
                 combateService.submeterBlocosNaTentativaSupabase(
@@ -208,14 +216,13 @@ class CombateEDicasSupabaseServiceTest {
 
         // solicita a dica vinculada exatamente a essa submissao incorreta (sem CategoriaErro vinda do cliente)
         when(executorMock.executarComandoIdempotente(eq(JOGADOR_ID), eq(chaveHint), eq("hint"), any()))
-                .thenReturn(conversorJson.readTree("{\"hint\":\"Use int para guardar numeros inteiros sem aspas.\"}"));
-        when(perfilRepoMock.buscarTentativaCicloAberta(JOGADOR_ID)).thenReturn(Optional.of(
-                new RegistroTentativaCiclo(runId, JOGADOR_ID, 1, "STAFF", "ACTIVE", 1, 2, 2, OffsetDateTime.now(), null)));
+                .thenReturn(conversorJson.readTree("{\"hint\":\"Use int para guardar numeros inteiros sem aspas.\",\"hints\":2,\"run_id\":\"" + runId + "\"}"));
 
         VidasDicasService.ResultadoEntregaDicaPedagogica dicaEntregue =
                 vidasDicasService.solicitarDicaParaSubmissaoIncorreta(usuarioTeste, chaveHint, submissionId);
 
         assertEquals(submissionId, dicaEntregue.identificadorSubmissaoOrigem());
+        assertEquals(runId, dicaEntregue.identificadorTentativaCicloOrigem());
         assertEquals("Use int para guardar numeros inteiros sem aspas.", dicaEntregue.textoDicaPedagogica());
         assertEquals(2, dicaEntregue.quantidadeDicasRestantesNaRun());
     }

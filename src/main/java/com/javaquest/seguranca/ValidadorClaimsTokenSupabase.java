@@ -1,5 +1,6 @@
 package com.javaquest.seguranca;
 
+import com.javaquest.repository.RepositorioSessoesAutenticadas;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -17,7 +18,10 @@ public class ValidadorClaimsTokenSupabase implements OAuth2TokenValidator<Jwt> {
 
     private final boolean exigirProvedorGoogle;
 
-    public ValidadorClaimsTokenSupabase(boolean exigirProvedorGoogle) {
+    private final RepositorioSessoesAutenticadas sessoesAutenticadas;
+
+    public ValidadorClaimsTokenSupabase(boolean exigirProvedorGoogle, RepositorioSessoesAutenticadas sessoesAutenticadas) {
+        this.sessoesAutenticadas = sessoesAutenticadas;
         this.exigirProvedorGoogle = exigirProvedorGoogle;
     }
 
@@ -51,6 +55,19 @@ public class ValidadorClaimsTokenSupabase implements OAuth2TokenValidator<Jwt> {
             return erroValidacao("Autenticacao permitida apenas via provedor Google.");
         }
 
+        String sessaoInformada = tokenJwt.getClaimAsString("session_id");
+        if (sessaoInformada == null) {
+            return erroValidacao("Token sem identificador de sessao.");
+        }
+        UUID identificadorSessao;
+        try {
+            identificadorSessao = UUID.fromString(sessaoInformada);
+        } catch (IllegalArgumentException erro) {
+            return erroValidacao("Identificador de sessao invalido.");
+        }
+        if (sessoesAutenticadas.sessaoEncerrada(UUID.fromString(assuntoSub), identificadorSessao)) {
+            return erroValidacao("Sessao encerrada.");
+        }
         return OAuth2TokenValidatorResult.success();
     }
 
@@ -60,15 +77,12 @@ public class ValidadorClaimsTokenSupabase implements OAuth2TokenValidator<Jwt> {
             return false;
         }
         Object provedorPrincipal = mapaMetadadosApp.get("provider");
-        if (provedorPrincipal instanceof String textoProvedor && PROVEDOR_GOOGLE.equalsIgnoreCase(textoProvedor)) {
-            return true;
+        if (!PROVEDOR_GOOGLE.equals(provedorPrincipal)) {
+            return false;
         }
-        Object listaProvedores = mapaMetadadosApp.get("providers");
-        if (listaProvedores instanceof List<?> provedores) {
-            return provedores.stream()
-                    .anyMatch(item -> item instanceof String texto && PROVEDOR_GOOGLE.equalsIgnoreCase(texto));
-        }
-        return false;
+        Object provedoresVinculados = mapaMetadadosApp.get("providers");
+        return provedoresVinculados == null || (provedoresVinculados instanceof List<?> provedores
+                && !provedores.isEmpty() && provedores.stream().allMatch(PROVEDOR_GOOGLE::equals));
     }
 
     private OAuth2TokenValidatorResult erroValidacao(String descricaoErro) {

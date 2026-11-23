@@ -12,13 +12,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.javaquest.dominio.TipoArmamentoHeroi;
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAndarCatalogo;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroCicloCatalogo;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroAndarCatalogo;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroCicloCatalogo;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -50,7 +50,7 @@ class CheckpointETrilhaServiceTest {
         this.perfilMock = mock(RepositorioPerfilEProgressoSupabase.class);
         this.checkpointService = new CheckpointService(executorMock, catalogoMock, perfilMock);
         this.usuarioTeste = new UsuarioAutenticadoJwt(
-                JOGADOR_ID, "marcos@test.com", "Marcos", null, "google", Instant.now().plusSeconds(3600));
+                JOGADOR_ID, "marcos@test.com", "Marcos", null, "google", Instant.now().plusSeconds(3600), UUID.randomUUID());
         this.conversorJson = new ObjectMapper();
     }
 
@@ -92,7 +92,6 @@ class CheckpointETrilhaServiceTest {
         when(catalogoMock.listarAndaresPorCiclo(1)).thenReturn(List.of(
                 new RegistroAndarCatalogo(1, 1, "Variaveis e Tipagem", "Objetivo 1", "NORMAL", false),
                 new RegistroAndarCatalogo(10, 1, "Boss desafio", "Objetivo 10", "NORMAL", true)));
-        when(catalogoMock.listarAndaresPorCiclo(2)).thenReturn(List.of());
 
         CheckpointService.ResumoTrilhaCiclosJogador trilha =
                 checkpointService.listarTrilhaCiclosEAndares(usuarioTeste);
@@ -100,17 +99,13 @@ class CheckpointETrilhaServiceTest {
         assertEquals(2, trilha.maiorCicloDesbloqueado());
         assertEquals(11, trilha.andarMaiorCheckpointDesbloqueado());
         assertTrue(trilha.proximoCicloAguardandoPublicacao());
-        assertEquals(2, trilha.ciclosDaTrilha().size());
+        assertEquals(1, trilha.ciclosDaTrilha().size());
 
         CheckpointService.ItemCicloNaTrilha ciclo1 = trilha.ciclosDaTrilha().get(0);
         assertTrue(ciclo1.desbloqueadoParaJogador());
         assertTrue(ciclo1.publicadoNoCatalogo());
         assertTrue(ciclo1.disponivelParaJogar());
 
-        CheckpointService.ItemCicloNaTrilha ciclo2 = trilha.ciclosDaTrilha().get(1);
-        assertTrue(ciclo2.desbloqueadoParaJogador());
-        assertFalse(ciclo2.publicadoNoCatalogo());
-        assertFalse(ciclo2.disponivelParaJogar());
     }
 
     @Test

@@ -1,5 +1,6 @@
-package com.javaquest.persistencia;
+package com.javaquest.repository;
 
+import com.javaquest.dominio.ResultadoValidacaoBlocosJava;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -62,7 +63,7 @@ public class ExecutorComandoBancoJogador {
                     String.class);
 
             if (respostaBrutaJson == null || respostaBrutaJson.isBlank()) {
-                return conversorJsonJackson.createObjectNode();
+                throw new IllegalStateException("O comando " + nomeOperacaoBanco + " retornou resposta vazia.");
             }
             return conversorJsonJackson.readTree(respostaBrutaJson);
         });
@@ -88,6 +89,11 @@ public class ExecutorComandoBancoJogador {
             acaoProtegidaNoBanco.run();
             return null;
         });
+    }
+
+    public ResultadoValidacaoBlocosJava lerValidacaoConfirmada(JsonNode resposta) {
+        return conversorJsonJackson.treeToValue(resposta.required("validation"),
+                ResultadoValidacaoBlocosJava.class);
     }
 
     private void aplicarContextoJogadorNaTransacaoAtual(UUID identificadorUnicoJogador) {

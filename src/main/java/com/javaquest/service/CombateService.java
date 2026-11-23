@@ -8,14 +8,12 @@ import com.javaquest.dominio.RespostaBlocosEnviadaJogador;
 import com.javaquest.dominio.ResultadoExecucaoSubmissao;
 import com.javaquest.dominio.ResultadoValidacaoBlocosJava;
 import com.javaquest.dominio.SubmissaoCodigo;
-import com.javaquest.persistencia.ExecutorComandoBancoJogador;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroInimigoAndar;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroMetadadosDesafioBanco;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaAndar;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.repository.ExecutorComandoBancoJogador;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroInimigoAndar;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaAndar;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -100,7 +98,7 @@ public class CombateService {
         long identificadorDesafioNoBanco = respostaInicioBanco.path("challenge_id").asLong();
         int numeroAndarSorteado = respostaInicioBanco.path("floor").asInt();
 
-        DefinicaoVarianteDesafioBlocos definicaoVariante = resolverDefinicaoVarianteDoBanco(
+        DefinicaoVarianteDesafioBlocos definicaoVariante = repositorioCatalogoBanco.buscarDefinicaoDaTentativa(
                 identificadorDesafioNoBanco,
                 numeroAndarSorteado);
 
@@ -114,16 +112,16 @@ public class CombateService {
 
         RegistroTentativaCiclo estadoRunAtual = repositorioPerfilEProgresso
                 .buscarTentativaCicloPorId(identificadorJogador, identificadorTentativaCiclo)
-                .orElse(null);
+                .orElseThrow(() -> new IllegalStateException("Estado da tentativa de ciclo indisponivel."));
 
         return new AberturaAndarArenaSupabase(
                 identificadorTentativaCiclo,
                 identificadorTentativaAndar,
                 numeroAndarSorteado,
                 ehAndarDeChefe(numeroAndarSorteado),
-                estadoRunAtual != null ? estadoRunAtual.codigoArmamentoFixo() : null,
-                estadoRunAtual != null ? estadoRunAtual.quantidadeVidasRestantes() : 3,
-                estadoRunAtual != null ? estadoRunAtual.quantidadeDicasRestantes() : 3,
+                estadoRunAtual.codigoArmamentoFixo(),
+                estadoRunAtual.quantidadeVidasRestantes(),
+                estadoRunAtual.quantidadeDicasRestantes(),
                 desafioPublicoEmbaralhado,
                 inimigosDoAndar);
     }
@@ -134,13 +132,22 @@ public class CombateService {
             UUID chaveIdempotenciaRequisicao,
             UUID identificadorTentativaAndar,
             RespostaBlocosEnviadaJogador respostaBlocosJogador) {
+        return submeterBlocosNaTentativaSupabase(usuarioAutenticado, chaveIdempotenciaRequisicao,
+                identificadorTentativaAndar, respostaBlocosJogador, null);
+    }
+
+    public ResultadoSubmissaoArenaSupabase submeterBlocosNaTentativaSupabase(
+            UsuarioAutenticadoJwt usuarioAutenticado,
+            UUID chaveIdempotenciaRequisicao,
+            UUID identificadorTentativaAndar,
+            RespostaBlocosEnviadaJogador respostaBlocosJogador,
+            MetricasService.DadosEventoTempoEstudo intervaloFinal) {
         exigirIntegracaoSupabaseAtiva();
         Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
         Objects.requireNonNull(identificadorTentativaAndar, "O id da tentativa do andar eh obrigatorio.");
 
-        UUID chaveSegura = chaveIdempotenciaRequisicao != null
-                ? chaveIdempotenciaRequisicao
-                : UUID.randomUUID();
+        UUID chaveSegura = Objects.requireNonNull(chaveIdempotenciaRequisicao,
+                "A submissao exige uma chave de idempotencia estavel.");
         UUID identificadorJogador = usuarioAutenticado.identificadorUnicoJogador();
 
         RegistroTentativaAndar tentativaAtual = repositorioPerfilEProgresso
@@ -152,12 +159,7 @@ public class CombateService {
                 .buscarTentativaCicloPorId(identificadorJogador, tentativaAtual.identificadorTentativaCiclo())
                 .orElseThrow(() -> new IllegalStateException("Tentativa de ciclo associada nao encontrada."));
 
-        int maiorCicloAntesDaSubmissao = repositorioPerfilEProgresso
-                .buscarPerfilComProgresso(identificadorJogador)
-                .map(RegistroPerfilComProgresso::maiorCicloDesbloqueado)
-                .orElse(1);
-
-        DefinicaoVarianteDesafioBlocos definicaoVarianteAtiva = resolverDefinicaoVarianteDoBanco(
+        DefinicaoVarianteDesafioBlocos definicaoVarianteAtiva = repositorioCatalogoBanco.buscarDefinicaoDaTentativa(
                 tentativaAtual.identificadorDesafioNoBanco(),
                 tentativaAtual.numeroAndar());
 
@@ -171,13 +173,18 @@ public class CombateService {
         // monta payload respeitando o CHECK do banco: error_category obrigatorio sse result = 'INCORRECT'
         Map<String, Object> payloadSubmissaoBanco = new LinkedHashMap<>();
         payloadSubmissaoBanco.put("attempt_id", identificadorTentativaAndar.toString());
+        payloadSubmissaoBanco.put("choices", respostaBlocosJogador == null ? Map.of()
+                : respostaBlocosJogador.getBlocosEscolhidosPorLacuna());
+        payloadSubmissaoBanco.put("validation", resultadoValidacao);
+        if (intervaloFinal != null) {
+            payloadSubmissaoBanco.put("study_interval", intervaloFinal.paraComandoBanco());
+        }
         payloadSubmissaoBanco.put("code", resultadoValidacao.codigoJavaMontadoFinal());
         payloadSubmissaoBanco.put("result", resultadoValidacao.resultadoExecucao().getCodigoPersistidoNoBanco());
         if (resultadoValidacao.resultadoExecucao() == ResultadoExecucaoSubmissao.INCORRETA) {
-            CategoriaErro categoriaGarantida = resultadoValidacao.categoriaErroDetectada() != null
-                    ? resultadoValidacao.categoriaErroDetectada()
-                    : CategoriaErro.LOGICA;
-            payloadSubmissaoBanco.put("error_category", categoriaGarantida.name());
+            CategoriaErro categoriaErro = Objects.requireNonNull(resultadoValidacao.categoriaErroDetectada(),
+                    "Submissao incorreta sem categoria de erro.");
+            payloadSubmissaoBanco.put("error_category", categoriaErro.name());
         } else {
             payloadSubmissaoBanco.put("error_category", null);
         }
@@ -190,45 +197,46 @@ public class CombateService {
                 "submit",
                 payloadSubmissaoBanco);
 
-        UUID identificadorSubmissaoCriada = UUID.fromString(respostaSubmitBanco.path("submission_id").asString());
-        String statusRunAtualizado = respostaSubmitBanco.path("status").asString();
-        int andarAtualizadoNaRun = respostaSubmitBanco.path("floor").asInt(tentativaAtual.numeroAndar());
-        int vidasRestantes = respostaSubmitBanco.path("lives").asInt();
-        int dicasRestantes = respostaSubmitBanco.path("hints").asInt();
-        int maiorCicloAposSubmissao = respostaSubmitBanco.path("highest_unlocked_cycle")
-                .asInt(maiorCicloAntesDaSubmissao);
-
-        boolean venceuAndar = resultadoValidacao.submissaoFoiAprovada();
-        boolean venceuChefe = venceuAndar && ehAndarDeChefe(tentativaAtual.numeroAndar());
-        boolean desbloqueouNovoCheckpoint = maiorCicloAposSubmissao > maiorCicloAntesDaSubmissao;
+        ResultadoValidacaoBlocosJava validacaoConfirmada = executorComandoBancoJogador
+                .lerValidacaoConfirmada(respostaSubmitBanco);
+        UUID identificadorSubmissaoCriada = UUID.fromString(respostaSubmitBanco.required("submission_id").asString());
+        String statusRunAtualizado = respostaSubmitBanco.required("status").asString();
+        int andarAtualizadoNaRun = respostaSubmitBanco.required("floor").asInt();
+        int vidasRestantes = respostaSubmitBanco.required("lives").asInt();
+        int dicasRestantes = respostaSubmitBanco.required("hints").asInt();
+        int maiorCicloAposSubmissao = respostaSubmitBanco.required("highest_unlocked_cycle").asInt();
+        boolean venceuChefe = validacaoConfirmada.submissaoFoiAprovada() && ehAndarDeChefe(tentativaAtual.numeroAndar());
+        boolean desbloqueouNovoCheckpoint = respostaSubmitBanco.required("checkpoint_unlocked").asBoolean();
         boolean tentativaCicloDerrotada = "DEFEATED".equalsIgnoreCase(statusRunAtualizado);
         boolean dicaDisponivelParaSubmissao =
-                resultadoValidacao.resultadoExecucao() == ResultadoExecucaoSubmissao.INCORRETA
+                validacaoConfirmada.resultadoExecucao() == ResultadoExecucaoSubmissao.INCORRETA
                         && !tentativaCicloDerrotada
                         && dicasRestantes > 0;
 
-        int andarMaiorCheckpoint = (QUANTIDADE_ANDARES_POR_CICLO * (maiorCicloAposSubmissao - 1)) + 1;
+        int andarMaiorCheckpoint = CheckpointService.calcularAndarCheckpointDoCiclo(maiorCicloAposSubmissao);
 
         return new ResultadoSubmissaoArenaSupabase(
                 identificadorSubmissaoCriada,
                 identificadorTentativaAndar,
                 runDaTentativa.identificadorTentativaCiclo(),
-                resultadoValidacao.resultadoExecucao(),
-                resultadoValidacao.categoriaErroDetectada(),
-                resultadoValidacao.codigoJavaMontadoFinal(),
-                resultadoValidacao.acoesHeroiNaArena(),
+                validacaoConfirmada.resultadoExecucao(),
+                validacaoConfirmada.categoriaErroDetectada(),
+                validacaoConfirmada.codigoJavaMontadoFinal(),
+                validacaoConfirmada.acoesHeroiNaArena(),
                 statusRunAtualizado,
                 andarAtualizadoNaRun,
                 vidasRestantes,
                 dicasRestantes,
                 maiorCicloAposSubmissao,
                 andarMaiorCheckpoint,
+                CheckpointService.calcularAndarCheckpointDoCiclo(runDaTentativa.numeroCiclo()),
+                validacaoConfirmada.resultadoExecucao() == ResultadoExecucaoSubmissao.INCORRETA,
                 venceuChefe,
                 desbloqueouNovoCheckpoint,
                 venceuChefe,
                 tentativaCicloDerrotada,
                 dicaDisponivelParaSubmissao,
-                resultadoValidacao.mensagemFeedbackPedagogico());
+                validacaoConfirmada.mensagemFeedbackPedagogico());
     }
 
     // === Metodos puros do motor de blocos (uteis pra simulacao e testes unitarios sem banco) ===
@@ -381,22 +389,6 @@ public class CombateService {
         return numeroAndarNaTorre > 0 && numeroAndarNaTorre % QUANTIDADE_ANDARES_POR_CICLO == 0;
     }
 
-    private DefinicaoVarianteDesafioBlocos resolverDefinicaoVarianteDoBanco(
-            long identificadorDesafioNoBanco,
-            int numeroAndarEsperado) {
-        RegistroMetadadosDesafioBanco metadadosBanco = repositorioCatalogoBanco
-                .buscarMetadadosDesafioPorId(identificadorDesafioNoBanco)
-                .orElseThrow(() -> new IllegalStateException(
-                        "Desafio " + identificadorDesafioNoBanco + " nao encontrado no catalogo do banco."));
-
-        return provedorCatalogoDesafiosBlocos
-                .buscarVariantePorAndarEChave(metadadosBanco.numeroAndarNaTorre(), metadadosBanco.chaveVarianteNoAndar())
-                .or(() -> provedorCatalogoDesafiosBlocos.buscarVariantePorIdentificador(identificadorDesafioNoBanco))
-                .orElseThrow(() -> new IllegalStateException(
-                        "Variante em blocos nao configurada para andar " + numeroAndarEsperado
-                                + " (" + metadadosBanco.chaveVarianteNoAndar() + ")."));
-    }
-
     private void exigirIntegracaoSupabaseAtiva() {
         if (executorComandoBancoJogador == null
                 || repositorioCatalogoBanco == null
@@ -431,6 +423,8 @@ public class CombateService {
             int quantidadeDicasRestantes,
             int maiorCicloDesbloqueado,
             int andarMaiorCheckpoint,
+            int andarCheckpointDeReinicio,
+            boolean inimigoContraAtacou,
             boolean venceuChefeDoCiclo,
             boolean desbloqueouNovoCheckpoint,
             boolean recursosRestauradosNoProximoCiclo,

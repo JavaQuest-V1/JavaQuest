@@ -46,6 +46,19 @@ class ValidacaoBlocosESorteioTest {
     }
 
     @Test
+    void deveExecutarUmAtaquePorIteracaoDoLaco() {
+        var variante = catalogoDesafios.buscarVariantePorAndarEChave(9, "v1").orElseThrow();
+        UUID tentativa = UUID.randomUUID();
+        var instancia = new GeradorInstanciaDesafioBlocos().gerarInstanciaParaTentativa(variante, tentativa);
+        int quantidadeEsperada = Integer.parseInt(instancia.valoresParametrosSorteados().get("QTD_GOLPES"));
+        var resultado = servicoValidacao.validarSubmissaoEmBlocos(variante, tentativa, "STAFF",
+                montarRespostaCorretaParaTeste(variante, tentativa));
+        assertTrue(resultado.submissaoFoiAprovada());
+        assertEquals(quantidadeEsperada, resultado.acoesHeroiNaArena().size());
+        assertTrue(resultado.mensagemFeedbackPedagogico().contains(variante.tituloTemaPedagogico()));
+    }
+
+    @Test
     void deveGarantirTresVariantesAtivasEValidaveisParaTodosOsDezAndaresDaApresentacao() {
         for (int numeroAndar = 1; numeroAndar <= 10; numeroAndar++) {
             List<DefinicaoVarianteDesafioBlocos> variantes = catalogoDesafios.listarVariantesAtivasPorAndar(numeroAndar);

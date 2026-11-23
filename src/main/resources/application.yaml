@@ -26,3 +26,11 @@ javaquest:
   seguranca:
     origens-cors-permitidas: ${JAVAQUEST_CORS_ORIGINS:http://localhost:3000}
     exigir-provedor-google: ${JAVAQUEST_EXIGIR_PROVEDOR_GOOGLE:true}
+  limite-taxa:
+    maximo-submissoes-por-minuto: ${JAVAQUEST_LIMITE_SUBMISSOES_MINUTO:30}
+    maximo-dicas-por-minuto: ${JAVAQUEST_LIMITE_DICAS_MINUTO:20}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method

@@ -1,17 +1,19 @@
 package com.javaquest.service;
 
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
-import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase.RegistroHistoricoCicloBanco;
-import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
-import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase;
+import com.javaquest.repository.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase.RegistroHistoricoCicloBanco;
+import com.javaquest.repository.RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.repository.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
 import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -51,30 +53,9 @@ public class MetricasService {
             UsuarioAutenticadoJwt usuarioAutenticado,
             DadosEventoTempoEstudo dadosEventoTempo) {
         Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
-        Objects.requireNonNull(dadosEventoTempo, "Os dados do evento de tempo sao obrigatorios.");
-        Objects.requireNonNull(dadosEventoTempo.identificadorSessaoEstudo(), "O id da sessao de estudo eh obrigatorio.");
-        Objects.requireNonNull(dadosEventoTempo.inicioIntervalo(), "O inicio do intervalo eh obrigatorio.");
-        Objects.requireNonNull(dadosEventoTempo.fimIntervalo(), "O fim do intervalo eh obrigatorio.");
+        Objects.requireNonNull(dadosEventoTempo, "O intervalo de estudo eh obrigatorio.");
 
-        if (dadosEventoTempo.numeroSequenciaEvento() < 0) {
-            throw new IllegalArgumentException("Numero de sequencia do evento nao pode ser negativo.");
-        }
-        if (dadosEventoTempo.segundosAtivosNoIntervalo() < 0) {
-            throw new IllegalArgumentException("Segundos ativos nao podem ser negativos.");
-        }
-        if (dadosEventoTempo.fimIntervalo().isBefore(dadosEventoTempo.inicioIntervalo())) {
-            throw new IllegalArgumentException("Fim do intervalo nao pode ser anterior ao inicio.");
-        }
-
-        // checa plausibilidade aki antes msm de bater no CHECK do banco (nn da pra ter 90s ativos num intervalo de 30s)
-        long duracaoTotalIntervaloSegundos = Duration.between(
-                dadosEventoTempo.inicioIntervalo(),
-                dadosEventoTempo.fimIntervalo()).getSeconds();
-        if (dadosEventoTempo.segundosAtivosNoIntervalo() > duracaoTotalIntervaloSegundos) {
-            throw new IllegalArgumentException(
-                    "Segundos ativos informados excedem a duracao real do intervalo.");
-        }
-
+        dadosEventoTempo.validar();
         repositorioMetricasEstudo.registrarIntervaloTempoEstudo(
                 usuarioAutenticado.identificadorUnicoJogador(),
                 dadosEventoTempo.identificadorSessaoEstudo(),
@@ -85,15 +66,23 @@ public class MetricasService {
                 dadosEventoTempo.segundosAtivosNoIntervalo());
     }
 
-    public void encerrarSessaoEstudo(
-            UsuarioAutenticadoJwt usuarioAutenticado,
-            UUID identificadorSessaoEstudo) {
-        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
-        Objects.requireNonNull(identificadorSessaoEstudo, "O id da sessao de estudo eh obrigatorio.");
+    @Transactional
+    public void encerrarSessaoEstudo(UsuarioAutenticadoJwt usuarioAutenticado, UUID identificadorSessaoEstudo) {
+        encerrarSessaoEstudo(usuarioAutenticado, identificadorSessaoEstudo, null);
+    }
 
-        repositorioMetricasEstudo.encerrarSessaoEstudo(
-                usuarioAutenticado.identificadorUnicoJogador(),
-                identificadorSessaoEstudo);
+    @Transactional
+    public void encerrarSessaoEstudo(UsuarioAutenticadoJwt usuarioAutenticado, UUID identificadorSessaoEstudo,
+            DadosEventoTempoEstudo intervaloFinal) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        if (intervaloFinal != null) {
+            if (identificadorSessaoEstudo != null && !identificadorSessaoEstudo.equals(intervaloFinal.identificadorSessaoEstudo())) {
+                throw new IllegalArgumentException("Intervalo final pertence a outra sessao.");
+            }
+            identificadorSessaoEstudo = intervaloFinal.identificadorSessaoEstudo();
+            registrarIntervaloTempoEstudo(usuarioAutenticado, intervaloFinal);
+        }
+        repositorioMetricasEstudo.encerrarSessaoEstudo(usuarioAutenticado.identificadorUnicoJogador(), identificadorSessaoEstudo);
     }
 
     // RF-22 e RF-23: usa a view player_metrics (streak calculado em America/Sao_Paulo, zerando se quebrar)
@@ -158,6 +147,41 @@ public class MetricasService {
             OffsetDateTime inicioIntervalo,
             OffsetDateTime fimIntervalo,
             int segundosAtivosNoIntervalo) {
+
+        void validar() {
+            Objects.requireNonNull(identificadorSessaoEstudo(), "O id da sessao de estudo eh obrigatorio.");
+            Objects.requireNonNull(inicioIntervalo(), "O inicio do intervalo eh obrigatorio.");
+            Objects.requireNonNull(fimIntervalo(), "O fim do intervalo eh obrigatorio.");
+
+            if (numeroSequenciaEvento() < 0) {
+                throw new IllegalArgumentException("Numero de sequencia do evento nao pode ser negativo.");
+            }
+            if (segundosAtivosNoIntervalo() < 0) {
+                throw new IllegalArgumentException("Segundos ativos nao podem ser negativos.");
+            }
+            if (fimIntervalo().isBefore(inicioIntervalo())) {
+                throw new IllegalArgumentException("Fim do intervalo nao pode ser anterior ao inicio.");
+            }
+
+            long duracaoTotalIntervaloSegundos = Duration.between(
+                    inicioIntervalo(),
+                    fimIntervalo()).getSeconds();
+            if (segundosAtivosNoIntervalo() > duracaoTotalIntervaloSegundos) {
+                throw new IllegalArgumentException(
+                        "Segundos ativos informados excedem a duracao real do intervalo.");
+            }
+        }
+
+        Map<String, Object> paraComandoBanco() {
+            validar();
+            Objects.requireNonNull(identificadorTentativaAndarOpcional, "O intervalo do combate exige tentativa de andar.");
+            return Map.of("identificadorSessaoEstudo", identificadorSessaoEstudo.toString(),
+                    "identificadorTentativaAndarOpcional", identificadorTentativaAndarOpcional.toString(),
+                    "numeroSequenciaEvento", numeroSequenciaEvento,
+                    "inicioIntervalo", inicioIntervalo.toInstant().toString(),
+                    "fimIntervalo", fimIntervalo.toInstant().toString(),
+                    "segundosAtivosNoIntervalo", segundosAtivosNoIntervalo);
+        }
     }
 
     public record ResumoDashboardJogador(
