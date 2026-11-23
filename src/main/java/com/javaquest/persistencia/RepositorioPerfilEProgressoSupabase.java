@@ -83,6 +83,72 @@ public class RepositorioPerfilEProgressoSupabase {
         });
     }
 
+    public Optional<RegistroTentativaCiclo> buscarTentativaCicloPorId(
+            UUID identificadorUnicoJogador,
+            UUID identificadorTentativaCiclo) {
+        return executorComandoBancoJogador.executarNoContextoDoJogador(identificadorUnicoJogador, () -> {
+            String consultaSql = """
+                    SELECT id, player_id, cycle_number, weapon_id, status,
+                           current_floor, lives_remaining, hints_remaining, started_at, ended_at
+                    FROM javaquest.cycle_runs
+                    WHERE player_id = :identificadorJogador
+                      AND id = :identificadorRun
+                    LIMIT 1
+                    """;
+            MapSqlParameterSource parametros = new MapSqlParameterSource()
+                    .addValue("identificadorJogador", identificadorUnicoJogador)
+                    .addValue("identificadorRun", identificadorTentativaCiclo);
+
+            List<RegistroTentativaCiclo> resultados = templateJdbcNomeado.query(
+                    consultaSql,
+                    parametros,
+                    (rs, numeroLinha) -> new RegistroTentativaCiclo(
+                            rs.getObject("id", UUID.class),
+                            rs.getObject("player_id", UUID.class),
+                            rs.getInt("cycle_number"),
+                            rs.getString("weapon_id"),
+                            rs.getString("status"),
+                            rs.getInt("current_floor"),
+                            rs.getInt("lives_remaining"),
+                            rs.getInt("hints_remaining"),
+                            rs.getObject("started_at", OffsetDateTime.class),
+                            rs.getObject("ended_at", OffsetDateTime.class)));
+            return resultados.stream().findFirst();
+        });
+    }
+
+    public Optional<RegistroTentativaAndar> buscarTentativaAndarPorId(
+            UUID identificadorUnicoJogador,
+            UUID identificadorTentativaAndar) {
+        return executorComandoBancoJogador.executarNoContextoDoJogador(identificadorUnicoJogador, () -> {
+            String consultaSql = """
+                    SELECT id, player_id, run_id, cycle_number, floor_number, challenge_id, status, started_at, ended_at
+                    FROM javaquest.floor_attempts
+                    WHERE player_id = :identificadorJogador
+                      AND id = :identificadorTentativa
+                    LIMIT 1
+                    """;
+            MapSqlParameterSource parametros = new MapSqlParameterSource()
+                    .addValue("identificadorJogador", identificadorUnicoJogador)
+                    .addValue("identificadorTentativa", identificadorTentativaAndar);
+
+            List<RegistroTentativaAndar> resultados = templateJdbcNomeado.query(
+                    consultaSql,
+                    parametros,
+                    (rs, numeroLinha) -> new RegistroTentativaAndar(
+                            rs.getObject("id", UUID.class),
+                            rs.getObject("player_id", UUID.class),
+                            rs.getObject("run_id", UUID.class),
+                            rs.getInt("cycle_number"),
+                            rs.getInt("floor_number"),
+                            rs.getLong("challenge_id"),
+                            rs.getString("status"),
+                            rs.getObject("started_at", OffsetDateTime.class),
+                            rs.getObject("ended_at", OffsetDateTime.class)));
+            return resultados.stream().findFirst();
+        });
+    }
+
     public Optional<RegistroTentativaAndar> buscarTentativaAndarAtiva(
             UUID identificadorUnicoJogador,
             UUID identificadorTentativaCiclo) {
@@ -113,6 +179,22 @@ public class RepositorioPerfilEProgressoSupabase {
                             rs.getObject("started_at", OffsetDateTime.class),
                             rs.getObject("ended_at", OffsetDateTime.class)));
             return resultados.stream().findFirst();
+        });
+    }
+
+    public int atualizarApelidoJogador(UUID identificadorUnicoJogador, String novoApelidoLimpo) {
+        return executorComandoBancoJogador.executarNoContextoDoJogador(identificadorUnicoJogador, () -> {
+            // atualiza soh o perfil do proprio jogador (RLS barra qualquer outro id msm se tentarem)
+            String comandoSql = """
+                    UPDATE javaquest.players
+                    SET nickname = :novoApelido,
+                        updated_at = clock_timestamp()
+                    WHERE id = :identificadorJogador
+                    """;
+            MapSqlParameterSource parametros = new MapSqlParameterSource()
+                    .addValue("novoApelido", novoApelidoLimpo)
+                    .addValue("identificadorJogador", identificadorUnicoJogador);
+            return templateJdbcNomeado.update(comandoSql, parametros);
         });
     }
 

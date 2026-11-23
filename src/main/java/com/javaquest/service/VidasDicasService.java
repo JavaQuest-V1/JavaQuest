@@ -1,102 +1,68 @@
 package com.javaquest.service;
 
-import com.javaquest.dominio.CategoriaErro;
-import com.javaquest.dominio.Dica;
-import com.javaquest.dominio.Jogador;
-import com.javaquest.dominio.ProgressoJogador;
+import com.javaquest.persistencia.ExecutorComandoBancoJogador;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.seguranca.UsuarioAutenticadoJwt;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
+// entrega dica pedagogica soh a partir de uma submissao INCORRECT ativa (RF-14 e RNF-11)
+@Service
 public class VidasDicasService {
 
-    private final JogadorRepository jogadorRepository;
-    private final ProvedorDica provedorDica;
-    private final TransactionRunner transactionRunner;
+    private final ExecutorComandoBancoJogador executorComandoBancoJogador;
+    private final RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso;
 
     public VidasDicasService(
-            JogadorRepository jogadorRepository,
-            ProvedorDica provedorDica,
-            TransactionRunner transactionRunner) {
-        this.jogadorRepository = Objects.requireNonNull(jogadorRepository);
-        this.provedorDica = Objects.requireNonNull(provedorDica);
-        this.transactionRunner = Objects.requireNonNull(transactionRunner);
+            ExecutorComandoBancoJogador executorComandoBancoJogador,
+            RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso) {
+        this.executorComandoBancoJogador = Objects.requireNonNull(executorComandoBancoJogador);
+        this.repositorioPerfilEProgresso = Objects.requireNonNull(repositorioPerfilEProgresso);
     }
 
-    public ResultadoVida descontarVida(String email) {
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            ProgressoJogador progresso = obterProgressoObrigatorio(jogador);
+    // cliente manda soh o submission_id; categoria do erro e limite de 3 dicas ficam 100% no server/banco
+    public ResultadoEntregaDicaPedagogica solicitarDicaParaSubmissaoIncorreta(
+            UsuarioAutenticadoJwt usuarioAutenticado,
+            UUID chaveIdempotenciaRequisicao,
+            UUID identificadorSubmissaoIncorreta) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        Objects.requireNonNull(identificadorSubmissaoIncorreta, "O id da submissao incorreta eh obrigatorio.");
 
-            progresso.consumirVida();
-            boolean derrotado = progresso.getVidasRestantes() != null && progresso.getVidasRestantes() <= 0;
+        UUID chaveSegura = chaveIdempotenciaRequisicao != null
+                ? chaveIdempotenciaRequisicao
+                : UUID.randomUUID();
+        UUID identificadorJogador = usuarioAutenticado.identificadorUnicoJogador();
 
-            jogadorRepository.salvar(jogador);
-            return new ResultadoVida(progresso.getVidasRestantes(), derrotado);
-        });
-    }
+        // se o front mandar dnv por queda de rede, o banco devolve a msm dica sem gastar outra
+        JsonNode respostaBanco = executorComandoBancoJogador.executarComandoIdempotente(
+                identificadorJogador,
+                chaveSegura,
+                "hint",
+                Map.of("submission_id", identificadorSubmissaoIncorreta.toString()));
 
-    public Dica liberarDica(String email, CategoriaErro categoriaErro) {
-        Objects.requireNonNull(categoriaErro, "Categoria de erro é obrigatória.");
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            ProgressoJogador progresso = obterProgressoObrigatorio(jogador);
-
-            if (!progresso.temDicaDisponivel()) {
-                throw new IllegalStateException("Limite de 3 dicas por ciclo atingido.");
-            }
-
-            progresso.consumirDica();
-            jogadorRepository.salvar(jogador);
-            return provedorDica.obterDica(progresso.getAndarAtual(), categoriaErro);
-        });
-    }
-
-    public ProgressoJogador restaurarRecursos(String email) {
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            ProgressoJogador progresso = obterProgressoObrigatorio(jogador);
-
-            progresso.restaurarRecursos();
-            jogadorRepository.salvar(jogador);
-            return progresso;
-        });
-    }
-
-    private Jogador buscarJogadorObrigatorio(String email) {
-        if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("E-mail do jogador é obrigatório.");
+        String textoDicaPedagogica = respostaBanco.path("hint").asString();
+        if (textoDicaPedagogica == null || textoDicaPedagogica.isBlank()) {
+            throw new IllegalStateException("Dica pedagogica nao retornada pelo banco para esta submissao.");
         }
-        return jogadorRepository.buscarPorEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Jogador não encontrado: " + email));
+
+        int dicasRestantesAtualizadas = repositorioPerfilEProgresso
+                .buscarTentativaCicloAberta(identificadorJogador)
+                .map(RegistroTentativaCiclo::quantidadeDicasRestantes)
+                .orElse(0);
+
+        return new ResultadoEntregaDicaPedagogica(
+                identificadorSubmissaoIncorreta,
+                textoDicaPedagogica,
+                dicasRestantesAtualizadas);
     }
 
-    private ProgressoJogador obterProgressoObrigatorio(Jogador jogador) {
-        ProgressoJogador progresso = jogador.getProgresso();
-        if (progresso == null) {
-            throw new IllegalStateException("Progresso do jogador não inicializado.");
-        }
-        return progresso;
-    }
-
-    public record ResultadoVida(Integer vidasRestantes, boolean semVidas) {
-    }
-
-    public interface JogadorRepository {
-        Optional<Jogador> buscarPorEmail(String email);
-        Jogador salvar(Jogador jogador);
-    }
-
-    public interface ProvedorDica {
-        Dica obterDica(Integer numeroAndar, CategoriaErro categoriaErro);
-    }
-
-    @FunctionalInterface
-    public interface TransactionRunner {
-        <T> T runInTransaction(TransactionalOperation<T> operation);
-    }
-
-    @FunctionalInterface
-    public interface TransactionalOperation<T> {
-        T execute();
+    public record ResultadoEntregaDicaPedagogica(
+            UUID identificadorSubmissaoOrigem,
+            String textoDicaPedagogica,
+            int quantidadeDicasRestantesNaRun) {
     }
 }

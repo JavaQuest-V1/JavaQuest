@@ -54,6 +54,18 @@ public class CatalogoDesafiosBlocosPadrao implements ProvedorCatalogoDesafiosBlo
         return Optional.ofNullable(mapaVariantesPorIdentificador.get(identificadorDesafioNoBanco));
     }
 
+    @Override
+    public Optional<DefinicaoVarianteDesafioBlocos> buscarVariantePorAndarEChave(
+            int numeroAndarNaTorre,
+            String chaveVarianteNoAndar) {
+        if (chaveVarianteNoAndar == null || chaveVarianteNoAndar.isBlank()) {
+            return Optional.empty();
+        }
+        return listarVariantesAtivasPorAndar(numeroAndarNaTorre).stream()
+                .filter(variante -> chaveVarianteNoAndar.equalsIgnoreCase(variante.chaveVarianteNoAndar()))
+                .findFirst();
+    }
+
     // andar 1: variaveis e tipagem estatica em java
     private void carregarAndar01VariaveisETipagem() {
         registrarVariante(

@@ -27,7 +27,7 @@ public class ValidacaoJavaService {
     private final GeradorInstanciaDesafioBlocos geradorInstanciaDesafioBlocos;
 
     public ValidacaoJavaService(GeradorInstanciaDesafioBlocos geradorInstanciaDesafioBlocos) {
-        this.geradorInstanciaDesafioBlocos = Objects.requireNonNull(geradorInstanciaDesafioBlocos);
+        this.geradorInstanciaDesafioBlocos =                                            Objects.requireNonNull(geradorInstanciaDesafioBlocos);
     }
 
     // roda fora da transacao do banco pra nn travar pool de conexao qnd tiver mt gente jogando

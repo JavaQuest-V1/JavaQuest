@@ -116,6 +116,40 @@ public class RepositorioCatalogoBancoSupabase {
                         rs.getInt("quantity")));
     }
 
+    // busca metadados do desafio sorteado sem devolver validation_rules pro cliente (RNF-11)
+    public Optional<RegistroMetadadosDesafioBanco> buscarMetadadosDesafioPorId(long identificadorDesafio) {
+        String consultaSql = """
+                SELECT id, floor_number, variant_key, revision, description, scenario::text AS scenario_json, active
+                FROM javaquest.challenges
+                WHERE id = :identificadorDesafio
+                """;
+        MapSqlParameterSource parametros = new MapSqlParameterSource()
+                .addValue("identificadorDesafio", identificadorDesafio);
+
+        List<RegistroMetadadosDesafioBanco> resultados = templateJdbcNomeado.query(
+                consultaSql,
+                parametros,
+                (rs, numeroLinha) -> new RegistroMetadadosDesafioBanco(
+                        rs.getLong("id"),
+                        rs.getInt("floor_number"),
+                        rs.getString("variant_key"),
+                        rs.getInt("revision"),
+                        rs.getString("description"),
+                        rs.getString("scenario_json"),
+                        rs.getBoolean("active")));
+        return resultados.stream().findFirst();
+    }
+
+    public record RegistroMetadadosDesafioBanco(
+            long identificadorDesafioNoBanco,
+            int numeroAndarNaTorre,
+            String chaveVarianteNoAndar,
+            int numeroRevisaoVariante,
+            String enunciadoNoBanco,
+            String cenarioArenaJson,
+            boolean desafioAtivo) {
+    }
+
     public record RegistroAparenciaHeroi2D(
             String codigoAparencia,
             String nomeAparencia,

@@ -1,117 +1,182 @@
 package com.javaquest.service;
 
+import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
+import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
+import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase;
+import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase.RegistroHistoricoCicloBanco;
+import com.javaquest.persistencia.RepositorioMetricasEstudoSupabase.RegistroMetricasConsolidadasJogador;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroTentativaCiclo;
+import com.javaquest.seguranca.UsuarioAutenticadoJwt;
 import java.time.Duration;
-import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
 
+// gerencia sessao unica de estudo (pausa 300s), streak oficial em SP e dashboard do jogador (RF-22, 23 e 24)
+@Service
 public class MetricasService {
 
-    private final MetricasRepository metricasRepository;
-    private final TransactionRunner transactionRunner;
+    // RF-24: cliente pausa automaticamente o cronometro dps de 5 minutos (300s) sem interacao
+    public static final int LIMITE_INATIVIDADE_SESSAO_SEGUNDOS = 300;
 
-    public MetricasService(MetricasRepository metricasRepository, TransactionRunner transactionRunner) {
-        this.metricasRepository = Objects.requireNonNull(metricasRepository);
-        this.transactionRunner = Objects.requireNonNull(transactionRunner);
+    private final RepositorioMetricasEstudoSupabase repositorioMetricasEstudo;
+    private final RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso;
+    private final RepositorioCatalogoBancoSupabase repositorioCatalogoBanco;
+
+    public MetricasService(
+            RepositorioMetricasEstudoSupabase repositorioMetricasEstudo,
+            RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso,
+            RepositorioCatalogoBancoSupabase repositorioCatalogoBanco) {
+        this.repositorioMetricasEstudo = Objects.requireNonNull(repositorioMetricasEstudo);
+        this.repositorioPerfilEProgresso = Objects.requireNonNull(repositorioPerfilEProgresso);
+        this.repositorioCatalogoBanco = Objects.requireNonNull(repositorioCatalogoBanco);
     }
 
-    public RegistroOfensiva registrarDiaAtivo(String email, Instant dataReferencia) {
-        String emailLimpo = validarEmail(email);
-        Instant referencia = dataReferencia != null ? dataReferencia : Instant.now();
-
-        return transactionRunner.runInTransaction(() -> {
-            RegistroOfensiva atual = metricasRepository.buscarOfensiva(emailLimpo)
-                    .orElse(new RegistroOfensiva(0, null));
-
-            int novaContagem;
-            if (atual.ultimoDiaAtivo() == null) {
-                novaContagem = 1;
-            } else {
-                long diasDecorridos = Duration.between(atual.ultimoDiaAtivo(), referencia).toDays();
-                if (diasDecorridos == 0) {
-                    novaContagem = Math.max(1, atual.diasConsecutivos());
-                } else if (diasDecorridos == 1) {
-                    novaContagem = atual.diasConsecutivos() + 1;
-                } else {
-                    novaContagem = 1;
-                }
-            }
-
-            RegistroOfensiva salvo = new RegistroOfensiva(novaContagem, referencia);
-            return metricasRepository.salvarOfensiva(emailLimpo, salvo);
-        });
+    // abre ou devolve a msm sessao de estudo ativa (evita duplicar se abrir varias abas)
+    public ResultadoAberturaSessaoEstudo abrirOuRecuperarSessaoEstudo(UsuarioAutenticadoJwt usuarioAutenticado) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        UUID identificadorSessaoAtiva = repositorioMetricasEstudo
+                .abrirOuRecuperarSessaoEstudo(usuarioAutenticado.identificadorUnicoJogador());
+        return new ResultadoAberturaSessaoEstudo(
+                identificadorSessaoAtiva,
+                LIMITE_INATIVIDADE_SESSAO_SEGUNDOS);
     }
 
-    public RegistroTempoSessao registrarTempoSessao(String email, long segundosSessao, long segundosNoAndarAtual) {
-        String emailLimpo = validarEmail(email);
-        if (segundosSessao < 0 || segundosNoAndarAtual < 0) {
-            throw new IllegalArgumentException("Tempo de sessão e tempo no andar não podem ser negativos.");
+    // grava intervalo de tempo ativo idempotente por sequence_number (inclui derrotas, abandonos e replays)
+    public void registrarIntervaloTempoEstudo(
+            UsuarioAutenticadoJwt usuarioAutenticado,
+            DadosEventoTempoEstudo dadosEventoTempo) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        Objects.requireNonNull(dadosEventoTempo, "Os dados do evento de tempo sao obrigatorios.");
+        Objects.requireNonNull(dadosEventoTempo.identificadorSessaoEstudo(), "O id da sessao de estudo eh obrigatorio.");
+        Objects.requireNonNull(dadosEventoTempo.inicioIntervalo(), "O inicio do intervalo eh obrigatorio.");
+        Objects.requireNonNull(dadosEventoTempo.fimIntervalo(), "O fim do intervalo eh obrigatorio.");
+
+        if (dadosEventoTempo.numeroSequenciaEvento() < 0) {
+            throw new IllegalArgumentException("Numero de sequencia do evento nao pode ser negativo.");
+        }
+        if (dadosEventoTempo.segundosAtivosNoIntervalo() < 0) {
+            throw new IllegalArgumentException("Segundos ativos nao podem ser negativos.");
+        }
+        if (dadosEventoTempo.fimIntervalo().isBefore(dadosEventoTempo.inicioIntervalo())) {
+            throw new IllegalArgumentException("Fim do intervalo nao pode ser anterior ao inicio.");
         }
 
-        return transactionRunner.runInTransaction(() -> {
-            RegistroTempoSessao atual = metricasRepository.buscarTempo(emailLimpo)
-                    .orElse(new RegistroTempoSessao(0L, 0L));
-
-            RegistroTempoSessao atualizado = new RegistroTempoSessao(
-                    atual.tempoTotalSessaoSegundos() + segundosSessao,
-                    segundosNoAndarAtual);
-            return metricasRepository.salvarTempo(emailLimpo, atualizado);
-        });
-    }
-
-    public RegistroDesempenhoCiclo registrarConclusaoCiclo(
-            String email, int andarInicial, int andarFinal, int vidasGastas, int dicasUsadas) {
-        String emailLimpo = validarEmail(email);
-        if (andarInicial <= 0 || andarFinal < andarInicial) {
-            throw new IllegalArgumentException("Intervalo de ciclo inválido.");
-        }
-        if (vidasGastas < 0 || dicasUsadas < 0) {
-            throw new IllegalArgumentException("Vidas gastas e dicas usadas não podem ser negativas.");
+        // checa plausibilidade aki antes msm de bater no CHECK do banco (nn da pra ter 90s ativos num intervalo de 30s)
+        long duracaoTotalIntervaloSegundos = Duration.between(
+                dadosEventoTempo.inicioIntervalo(),
+                dadosEventoTempo.fimIntervalo()).getSeconds();
+        if (dadosEventoTempo.segundosAtivosNoIntervalo() > duracaoTotalIntervaloSegundos) {
+            throw new IllegalArgumentException(
+                    "Segundos ativos informados excedem a duracao real do intervalo.");
         }
 
-        return transactionRunner.runInTransaction(() -> {
-            RegistroDesempenhoCiclo registro = new RegistroDesempenhoCiclo(
-                    andarInicial, andarFinal, vidasGastas, dicasUsadas, Instant.now());
-            return metricasRepository.salvarHistoricoCiclo(emailLimpo, registro);
-        });
+        repositorioMetricasEstudo.registrarIntervaloTempoEstudo(
+                usuarioAutenticado.identificadorUnicoJogador(),
+                dadosEventoTempo.identificadorSessaoEstudo(),
+                dadosEventoTempo.numeroSequenciaEvento(),
+                dadosEventoTempo.identificadorTentativaAndarOpcional(),
+                dadosEventoTempo.inicioIntervalo(),
+                dadosEventoTempo.fimIntervalo(),
+                dadosEventoTempo.segundosAtivosNoIntervalo());
     }
 
-    private String validarEmail(String email) {
-        if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("E-mail do jogador é obrigatório.");
-        }
-        return email.trim();
+    public void encerrarSessaoEstudo(
+            UsuarioAutenticadoJwt usuarioAutenticado,
+            UUID identificadorSessaoEstudo) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        Objects.requireNonNull(identificadorSessaoEstudo, "O id da sessao de estudo eh obrigatorio.");
+
+        repositorioMetricasEstudo.encerrarSessaoEstudo(
+                usuarioAutenticado.identificadorUnicoJogador(),
+                identificadorSessaoEstudo);
     }
 
-    public record RegistroOfensiva(int diasConsecutivos, Instant ultimoDiaAtivo) {
+    // RF-22 e RF-23: usa a view player_metrics (streak calculado em America/Sao_Paulo, zerando se quebrar)
+    public ResumoDashboardJogador montarDashboardJogador(UsuarioAutenticadoJwt usuarioAutenticado) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        UUID identificadorJogador = usuarioAutenticado.identificadorUnicoJogador();
+
+        RegistroPerfilComProgresso perfilAtual = repositorioPerfilEProgresso
+                .buscarPerfilComProgresso(identificadorJogador)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Perfil do jogador nao inicializado. Sincronize a sessao primeiro."));
+
+        RegistroAparenciaHeroi2D aparenciaPadrao2D = repositorioCatalogoBanco
+                .buscarAparenciaPadraoHeroi()
+                .orElse(null);
+
+        RegistroMetricasConsolidadasJogador metricasConsolidadas = repositorioMetricasEstudo
+                .buscarMetricasConsolidadas(identificadorJogador)
+                .orElse(new RegistroMetricasConsolidadasJogador(identificadorJogador, 0L, 0L, 0L, 0L, 0L));
+
+        RegistroTentativaCiclo tentativaCicloAberta = repositorioPerfilEProgresso
+                .buscarTentativaCicloAberta(identificadorJogador)
+                .orElse(null);
+
+        List<RegistroHistoricoCicloBanco> historicoCiclos =
+                repositorioMetricasEstudo.listarHistoricoCiclos(identificadorJogador);
+
+        return new ResumoDashboardJogador(
+                identificadorJogador,
+                perfilAtual.apelidoHeroi(),
+                usuarioAutenticado.urlFotoPerfilGoogle(),
+                perfilAtual.nivelExperienciaBanco(),
+                perfilAtual.canalAquisicaoBanco(),
+                perfilAtual.codigoArmamentoPreferido(),
+                aparenciaPadrao2D,
+                perfilAtual.maiorCicloDesbloqueado(),
+                perfilAtual.calcularAndarMaiorCheckpoint(),
+                metricasConsolidadas.totalVitoriasAndares(),
+                metricasConsolidadas.totalAndaresDistintosVencidos(),
+                metricasConsolidadas.totalSegundosAtivosEstudo(),
+                metricasConsolidadas.sequenciaAtualDiasAtivos(),
+                metricasConsolidadas.maiorSequenciaDiasAtivos(),
+                LIMITE_INATIVIDADE_SESSAO_SEGUNDOS,
+                tentativaCicloAberta,
+                historicoCiclos);
     }
 
-    public record RegistroTempoSessao(long tempoTotalSessaoSegundos, long tempoAndarAtualSegundos) {
+    public List<RegistroHistoricoCicloBanco> listarHistoricoCiclos(UsuarioAutenticadoJwt usuarioAutenticado) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        return repositorioMetricasEstudo.listarHistoricoCiclos(usuarioAutenticado.identificadorUnicoJogador());
     }
 
-    public record RegistroDesempenhoCiclo(
-            int andarInicial,
-            int andarFinal,
-            int vidasGastas,
-            int dicasUsadas,
-            Instant concluidoEm) {
+    public record ResultadoAberturaSessaoEstudo(
+            UUID identificadorSessaoEstudo,
+            int limiteInatividadeSegundos) {
     }
 
-    public interface MetricasRepository {
-        Optional<RegistroOfensiva> buscarOfensiva(String email);
-        RegistroOfensiva salvarOfensiva(String email, RegistroOfensiva ofensiva);
-        Optional<RegistroTempoSessao> buscarTempo(String email);
-        RegistroTempoSessao salvarTempo(String email, RegistroTempoSessao tempo);
-        RegistroDesempenhoCiclo salvarHistoricoCiclo(String email, RegistroDesempenhoCiclo historico);
+    public record DadosEventoTempoEstudo(
+            UUID identificadorSessaoEstudo,
+            long numeroSequenciaEvento,
+            UUID identificadorTentativaAndarOpcional,
+            OffsetDateTime inicioIntervalo,
+            OffsetDateTime fimIntervalo,
+            int segundosAtivosNoIntervalo) {
     }
 
-    @FunctionalInterface
-    public interface TransactionRunner {
-        <T> T runInTransaction(TransactionalOperation<T> operation);
-    }
-
-    @FunctionalInterface
-    public interface TransactionalOperation<T> {
-        T execute();
+    public record ResumoDashboardJogador(
+            UUID identificadorUnicoJogador,
+            String apelidoHeroi,
+            String urlFotoPerfilGoogle,
+            String nivelExperiencia,
+            String canalAquisicao,
+            String codigoArmamentoPreferido,
+            RegistroAparenciaHeroi2D aparenciaPadrao2D,
+            int maiorCicloDesbloqueado,
+            int andarMaiorCheckpoint,
+            long totalVitoriasAndares,
+            long totalAndaresDistintosVencidos,
+            long totalSegundosAtivosEstudo,
+            long sequenciaAtualDiasAtivos,
+            long maiorSequenciaDiasAtivos,
+            int limiteInatividadeSegundos,
+            RegistroTentativaCiclo tentativaCicloAberta,
+            List<RegistroHistoricoCicloBanco> historicoTentativasCiclo) {
     }
 }

@@ -1,116 +1,155 @@
 package com.javaquest.service;
 
-import com.javaquest.dominio.Armamento;
-import com.javaquest.dominio.Cajado;
 import com.javaquest.dominio.CanalAquisicao;
-import com.javaquest.dominio.Espada;
-import com.javaquest.dominio.Jogador;
 import com.javaquest.dominio.NivelExperiencia;
-import com.javaquest.dominio.ProgressoJogador;
+import com.javaquest.dominio.TipoArmamentoHeroi;
+import com.javaquest.persistencia.ExecutorComandoBancoJogador;
+import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase;
+import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroAparenciaHeroi2D;
+import com.javaquest.persistencia.RepositorioCatalogoBancoSupabase.RegistroArmamentoCatalogo2D;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase;
+import com.javaquest.persistencia.RepositorioPerfilEProgressoSupabase.RegistroPerfilComProgresso;
+import com.javaquest.seguranca.UsuarioAutenticadoJwt;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
 
+// gerencia perfil, onboarding completo (RF-02 a RF-07) e catalogos 2D conectado direto ao Supabase
+@Service
 public class JogadorService {
 
-    private final JogadorRepository jogadorRepository;
-    private final TransactionRunner transactionRunner;
+    public static final int TAMANHO_MAXIMO_APELIDO = 30;
 
-    public JogadorService(JogadorRepository jogadorRepository, TransactionRunner transactionRunner) {
-        this.jogadorRepository = Objects.requireNonNull(jogadorRepository);
-        this.transactionRunner = Objects.requireNonNull(transactionRunner);
+    private final ExecutorComandoBancoJogador executorComandoBancoJogador;
+    private final RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso;
+    private final RepositorioCatalogoBancoSupabase repositorioCatalogoBanco;
+
+    public JogadorService(
+            ExecutorComandoBancoJogador executorComandoBancoJogador,
+            RepositorioPerfilEProgressoSupabase repositorioPerfilEProgresso,
+            RepositorioCatalogoBancoSupabase repositorioCatalogoBanco) {
+        this.executorComandoBancoJogador = Objects.requireNonNull(executorComandoBancoJogador);
+        this.repositorioPerfilEProgresso = Objects.requireNonNull(repositorioPerfilEProgresso);
+        this.repositorioCatalogoBanco = Objects.requireNonNull(repositorioCatalogoBanco);
     }
 
-    public Jogador salvarApelido(String email, String apelido) {
-        if (apelido == null || apelido.isBlank()) {
-            throw new IllegalArgumentException("Apelido não pode ser vazio.");
+    public PerfilCompletoJogador obterPerfilCompleto(UsuarioAutenticadoJwt usuarioAutenticado) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        UUID identificadorJogador = usuarioAutenticado.identificadorUnicoJogador();
+
+        RegistroPerfilComProgresso perfilAtual = repositorioPerfilEProgresso
+                .buscarPerfilComProgresso(identificadorJogador)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Perfil ainda nao inicializado. Chame a sincronizacao de sessao primeiro."));
+
+        RegistroAparenciaHeroi2D aparenciaPadrao2D = repositorioCatalogoBanco
+                .buscarAparenciaPadraoHeroi()
+                .orElse(null);
+
+        List<RegistroArmamentoCatalogo2D> armamentosAtivos = repositorioCatalogoBanco.listarArmamentosAtivos();
+
+        return new PerfilCompletoJogador(
+                usuarioAutenticado.emailContaGoogle(),
+                usuarioAutenticado.nomeCompletoContaGoogle(),
+                usuarioAutenticado.urlFotoPerfilGoogle(),
+                perfilAtual,
+                aparenciaPadrao2D,
+                armamentosAtivos);
+    }
+
+    // conclui onboarding de uma vez via command('onboarding') garantindo os 4 campos obrigatorios no banco
+    public PerfilCompletoJogador concluirOnboardingJogador(
+            UsuarioAutenticadoJwt usuarioAutenticado,
+            UUID chaveIdempotenciaRequisicao,
+            DadosOnboardingJogador dadosOnboarding) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        Objects.requireNonNull(dadosOnboarding, "Os dados do onboarding sao obrigatorios.");
+
+        String apelidoValidado = validarENormalizarApelido(dadosOnboarding.apelidoHeroi());
+        NivelExperiencia nivelValidado = Objects.requireNonNull(
+                dadosOnboarding.nivelExperiencia(),
+                "Nivel de experiencia eh obrigatorio (RF-03).");
+        CanalAquisicao canalValidado = Objects.requireNonNull(
+                dadosOnboarding.canalAquisicao(),
+                "Canal de aquisicao eh obrigatorio (RF-04).");
+        TipoArmamentoHeroi armamentoValidado = Objects.requireNonNull(
+                dadosOnboarding.tipoArmamentoInicial(),
+                "Armamento inicial eh obrigatorio (RF-07).");
+
+        UUID chaveSegura = chaveIdempotenciaRequisicao != null
+                ? chaveIdempotenciaRequisicao
+                : UUID.randomUUID();
+
+        // chaves do payload seguem o contrato exato da funcao SQL javaquest.command('onboarding')
+        Map<String, Object> payloadOnboardingBanco = new LinkedHashMap<>();
+        payloadOnboardingBanco.put("nickname", apelidoValidado);
+        payloadOnboardingBanco.put("experience", nivelValidado.name());
+        payloadOnboardingBanco.put("channel", canalValidado.name());
+        payloadOnboardingBanco.put("weapon", armamentoValidado.getCodigoArmamentoBanco());
+
+        executorComandoBancoJogador.executarComandoIdempotente(
+                usuarioAutenticado.identificadorUnicoJogador(),
+                chaveSegura,
+                "onboarding",
+                payloadOnboardingBanco);
+
+        return obterPerfilCompleto(usuarioAutenticado);
+    }
+
+    // permite editar o apelido dps do onboarding (RF-02 permite apelidos repetidos pq a PK eh UUID)
+    public PerfilCompletoJogador atualizarApelidoJogador(
+            UsuarioAutenticadoJwt usuarioAutenticado,
+            String novoApelidoInformado) {
+        Objects.requireNonNull(usuarioAutenticado, "O usuario autenticado eh obrigatorio.");
+        String apelidoValidado = validarENormalizarApelido(novoApelidoInformado);
+
+        int linhasAlteradas = repositorioPerfilEProgresso.atualizarApelidoJogador(
+                usuarioAutenticado.identificadorUnicoJogador(),
+                apelidoValidado);
+        if (linhasAlteradas == 0) {
+            throw new IllegalStateException("Perfil do jogador nao encontrado para atualizar apelido.");
         }
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            jogador.definirApelido(apelido.trim());
-            return jogadorRepository.salvar(jogador);
-        });
+
+        return obterPerfilCompleto(usuarioAutenticado);
     }
 
-    public Jogador salvarNivelExperiencia(String email, NivelExperiencia nivelExperiencia) {
-        Objects.requireNonNull(nivelExperiencia, "Nível de experiência é obrigatório.");
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            jogador.definirNivelExperiencia(nivelExperiencia);
-            return jogadorRepository.salvar(jogador);
-        });
+    public List<RegistroArmamentoCatalogo2D> listarArmamentosAtivos() {
+        return repositorioCatalogoBanco.listarArmamentosAtivos();
     }
 
-    public Jogador salvarCanalAquisicao(String email, CanalAquisicao canalAquisicao) {
-        Objects.requireNonNull(canalAquisicao, "Canal de aquisição é obrigatório.");
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            jogador.definirCanalAquisicao(canalAquisicao);
-            return jogadorRepository.salvar(jogador);
-        });
+    public RegistroAparenciaHeroi2D obterAparenciaPadraoHeroi() {
+        return repositorioCatalogoBanco.buscarAparenciaPadraoHeroi()
+                .orElseThrow(() -> new IllegalStateException("Aparencia padrao HERO_DEFAULT_2D nao cadastrada."));
     }
 
-    public Jogador definirArmamento(String email, TipoArmamento tipoArmamento) {
-        Objects.requireNonNull(tipoArmamento, "Tipo de armamento é obrigatório.");
-        return transactionRunner.runInTransaction(() -> {
-            Jogador jogador = buscarJogadorObrigatorio(email);
-            Armamento novaArma = instanciarArmamento(tipoArmamento);
-
-            if (jogador.getArmamentoAtual() == null) {
-                jogador.escolherArmamento(novaArma);
-            } else {
-                ProgressoJogador progresso = jogador.getProgresso();
-                if (progresso != null && !progresso.podeTrocarArmamento()) {
-                    throw new IllegalStateException(
-                            "A troca de arma só pode ser realizada fora de combate, antes de um novo ciclo.");
-                }
-                if (progresso != null && !ehInicioDeCiclo(progresso)) {
-                    throw new IllegalStateException(
-                            "A troca de arma só pode ser realizada antes de iniciar um novo ciclo a partir de um checkpoint desbloqueado.");
-                }
-                jogador.trocarArmamento(novaArma);
-            }
-
-            return jogadorRepository.salvar(jogador);
-        });
-    }
-
-    private boolean ehInicioDeCiclo(ProgressoJogador progresso) {
-        Integer andarAtual = progresso.getAndarAtual();
-        return andarAtual != null && andarAtual > 1 && ((andarAtual - 1) % 10 == 0);
-    }
-
-    private Armamento instanciarArmamento(TipoArmamento tipoArmamento) {
-        return switch (tipoArmamento) {
-            case ESPADA -> new Espada();
-            case CAJADO -> new Cajado();
-        };
-    }
-
-    private Jogador buscarJogadorObrigatorio(String email) {
-        if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("E-mail do jogador é obrigatório.");
+    private String validarENormalizarApelido(String apelidoInformado) {
+        if (apelidoInformado == null || apelidoInformado.isBlank()) {
+            throw new IllegalArgumentException("Apelido do heroi nao pode ser vazio.");
         }
-        return jogadorRepository.buscarPorEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Jogador não encontrado: " + email));
+        String apelidoLimpo = apelidoInformado.trim();
+        if (apelidoLimpo.length() > TAMANHO_MAXIMO_APELIDO) {
+            throw new IllegalArgumentException(
+                    "Apelido do heroi deve ter no maximo " + TAMANHO_MAXIMO_APELIDO + " caracteres.");
+        }
+        return apelidoLimpo;
     }
 
-    public enum TipoArmamento {
-        ESPADA,
-        CAJADO
+    public record DadosOnboardingJogador(
+            String apelidoHeroi,
+            NivelExperiencia nivelExperiencia,
+            CanalAquisicao canalAquisicao,
+            TipoArmamentoHeroi tipoArmamentoInicial) {
     }
 
-    public interface JogadorRepository {
-        Optional<Jogador> buscarPorEmail(String email);
-        Jogador salvar(Jogador jogador);
-    }
-
-    @FunctionalInterface
-    public interface TransactionRunner {
-        <T> T runInTransaction(TransactionalOperation<T> operation);
-    }
-
-    @FunctionalInterface
-    public interface TransactionalOperation<T> {
-        T execute();
+    public record PerfilCompletoJogador(
+            String emailContaGoogle,
+            String nomeCompletoContaGoogle,
+            String urlFotoPerfilGoogle,
+            RegistroPerfilComProgresso perfilComProgresso,
+            RegistroAparenciaHeroi2D aparenciaPadrao2D,
+            List<RegistroArmamentoCatalogo2D> armamentosAtivos) {
     }
 }

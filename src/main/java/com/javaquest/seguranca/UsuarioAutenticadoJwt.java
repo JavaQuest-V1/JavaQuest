@@ -1,5 +1,6 @@
 package com.javaquest.seguranca;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -9,7 +10,9 @@ public record UsuarioAutenticadoJwt(
         UUID identificadorUnicoJogador,
         String emailContaGoogle,
         String nomeCompletoContaGoogle,
-        String urlFotoPerfilGoogle) {
+        String urlFotoPerfilGoogle,
+        String provedorAutenticacao,
+        Instant instanteExpiracaoToken) {
 
     // pega soh o sub (UUID) pra autorizacao e RLS; user_metadata serve soh pra sugerir nome/foto na tela
     public static UsuarioAutenticadoJwt extrairDeTokenJwt(Jwt tokenJwtValidado) {
@@ -22,13 +25,26 @@ public record UsuarioAutenticadoJwt(
 
         String nomeGoogle = null;
         String fotoGoogle = null;
-        Object metadadosBrutos = tokenJwtValidado.getClaims().get("user_metadata");
-        if (metadadosBrutos instanceof Map<?, ?> mapaMetadados) {
-            nomeGoogle = primeiroTextoValido(mapaMetadados.get("full_name"), mapaMetadados.get("name"));
-            fotoGoogle = primeiroTextoValido(mapaMetadados.get("avatar_url"), mapaMetadados.get("picture"));
+        Object metadadosUsuarioBrutos = tokenJwtValidado.getClaims().get("user_metadata");
+        if (metadadosUsuarioBrutos instanceof Map<?, ?> mapaMetadadosUsuario) {
+            nomeGoogle = primeiroTextoValido(mapaMetadadosUsuario.get("full_name"), mapaMetadadosUsuario.get("name"));
+            fotoGoogle = primeiroTextoValido(mapaMetadadosUsuario.get("avatar_url"), mapaMetadadosUsuario.get("picture"));
         }
 
-        return new UsuarioAutenticadoJwt(identificadorJogador, emailGoogle, nomeGoogle, fotoGoogle);
+        // provedor vem de app_metadata (controlado pelo servidor do Supabase, nunca editavel pelo cliente)
+        String provedorApp = null;
+        Object metadadosAppBrutos = tokenJwtValidado.getClaims().get("app_metadata");
+        if (metadadosAppBrutos instanceof Map<?, ?> mapaMetadadosApp) {
+            provedorApp = primeiroTextoValido(mapaMetadadosApp.get("provider"), null);
+        }
+
+        return new UsuarioAutenticadoJwt(
+                identificadorJogador,
+                emailGoogle,
+                nomeGoogle,
+                fotoGoogle,
+                provedorApp,
+                tokenJwtValidado.getExpiresAt());
     }
 
     // sugere o primeiro nome da conta Google no onboarding (RF-02)

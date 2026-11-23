@@ -10,4 +10,6 @@ public interface ProvedorCatalogoDesafiosBlocos {
     List<DefinicaoVarianteDesafioBlocos> listarVariantesAtivasPorAndar(int numeroAndarNaTorre);
 
     Optional<DefinicaoVarianteDesafioBlocos> buscarVariantePorIdentificador(Long identificadorDesafioNoBanco);
+
+    Optional<DefinicaoVarianteDesafioBlocos> buscarVariantePorAndarEChave(int numeroAndarNaTorre, String chaveVarianteNoAndar);
 }

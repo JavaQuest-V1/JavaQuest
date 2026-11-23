@@ -1,0 +1,77 @@
+package com.javaquest.seguranca;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.jwt.Jwt;
+
+// valida claims obrigatorias do JWT do Supabase Auth (aud, role, sub UUID e provedor Google em app_metadata)
+public class ValidadorClaimsTokenSupabase implements OAuth2TokenValidator<Jwt> {
+
+    private static final String AUDIENCIA_ESPERADA = "authenticated";
+    private static final String PAPEL_ESPERADO = "authenticated";
+    private static final String PROVEDOR_GOOGLE = "google";
+
+    private final boolean exigirProvedorGoogle;
+
+    public ValidadorClaimsTokenSupabase(boolean exigirProvedorGoogle) {
+        this.exigirProvedorGoogle = exigirProvedorGoogle;
+    }
+
+    @Override
+    public OAuth2TokenValidatorResult validate(Jwt tokenJwt) {
+        // 1. confere se a audiencia tem "authenticated" (evita token de outro servico)
+        List<String> audienciasToken = tokenJwt.getAudience();
+        if (audienciasToken == null || !audienciasToken.contains(AUDIENCIA_ESPERADA)) {
+            return erroValidacao("Audiencia do token JWT invalida; esperado 'authenticated'.");
+        }
+
+        // 2. barra chave anon ou qualquer role q nn seja usuario autenticado msm
+        String papelToken = tokenJwt.getClaimAsString("role");
+        if (!PAPEL_ESPERADO.equals(papelToken)) {
+            return erroValidacao("Role do token JWT invalida; esperado 'authenticated'.");
+        }
+
+        // 3. o sub precisa ser um UUID valido pq o RLS do banco faz cast pra uuid
+        String assuntoSub = tokenJwt.getSubject();
+        if (assuntoSub == null || assuntoSub.isBlank()) {
+            return erroValidacao("Token JWT sem claim sub.");
+        }
+        try {
+            UUID.fromString(assuntoSub);
+        } catch (IllegalArgumentException erroConversao) {
+            return erroValidacao("Claim sub do token JWT nao eh um UUID valido.");
+        }
+
+        // 4. login só via Google! sempre le app_metadata (nunca user_metadata q o user pode editar)
+        if (exigirProvedorGoogle && !provedorTokenEhGoogle(tokenJwt)) {
+            return erroValidacao("Autenticacao permitida apenas via provedor Google.");
+        }
+
+        return OAuth2TokenValidatorResult.success();
+    }
+
+    private boolean provedorTokenEhGoogle(Jwt tokenJwt) {
+        Object metadadosAppBrutos = tokenJwt.getClaims().get("app_metadata");
+        if (!(metadadosAppBrutos instanceof Map<?, ?> mapaMetadadosApp)) {
+            return false;
+        }
+        Object provedorPrincipal = mapaMetadadosApp.get("provider");
+        if (provedorPrincipal instanceof String textoProvedor && PROVEDOR_GOOGLE.equalsIgnoreCase(textoProvedor)) {
+            return true;
+        }
+        Object listaProvedores = mapaMetadadosApp.get("providers");
+        if (listaProvedores instanceof List<?> provedores) {
+            return provedores.stream()
+                    .anyMatch(item -> item instanceof String texto && PROVEDOR_GOOGLE.equalsIgnoreCase(texto));
+        }
+        return false;
+    }
+
+    private OAuth2TokenValidatorResult erroValidacao(String descricaoErro) {
+        return OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token", descricaoErro, null));
+    }
+}

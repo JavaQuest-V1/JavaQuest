@@ -25,3 +25,4 @@ spring:
 javaquest:
   seguranca:
     origens-cors-permitidas: ${JAVAQUEST_CORS_ORIGINS:http://localhost:3000}
+    exigir-provedor-google: ${JAVAQUEST_EXIGIR_PROVEDOR_GOOGLE:true}
