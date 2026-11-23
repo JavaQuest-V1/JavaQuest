@@ -1,0 +1,233 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@500;600;700&family=Nunito+Sans:wght@500;600;700;800&display=swap");
+@import "tailwindcss";
+
+:root {
+  --font-display: "Bahnschrift", "Barlow Condensed", "DIN Condensed", sans-serif;
+  --font-sans: "Nunito Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+
+  /* JavaQuest Design System — Exact Palette from Desing system.png */
+  --jq-obsidian: #0C0810;
+  --jq-slot: #1B1118;
+  --jq-leather: #552840;
+  --jq-leather-dark: #3C1B2D;
+  --jq-strap: #70443C;
+  --jq-stitch: #B08A6E;
+  --jq-stone: #6C6877;
+  --jq-plaque: #262134;
+  --jq-plum: #20122E;
+  --jq-forest: #264A2B;
+  --jq-emerald: #5A8F49;
+  --jq-ochre: #5A3E18;
+  --jq-gold: #E5A93B;
+  --jq-crimson: #CA1C08;
+  --jq-crimson-bright: #E32B16;
+  --jq-ivory: #F4EFE6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  background-color: var(--jq-obsidian);
+  color: var(--jq-ivory);
+  font-family: var(--font-sans), "Nunito Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: "Bahnschrift", var(--font-display), "Barlow Condensed", sans-serif;
+  font-stretch: condensed;
+  letter-spacing: 0.04em;
+}
+
+.font-code {
+  font-family: var(--font-mono), "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-ligatures: none;
+}
+
+/* Crisp pixel-art canvas scaling */
+.pixel-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Signature Octagonal Token (Pedra Facetada) */
+.jq-octagon {
+  clip-path: polygon(
+    29% 0%,
+    71% 0%,
+    100% 29%,
+    100% 71%,
+    71% 100%,
+    29% 100%,
+    0% 71%,
+    0% 29%
+  );
+}
+
+/* Stitched Leather Outer Panel (Couro Costurado) */
+.jq-leather-panel {
+  background: linear-gradient(180deg, #5b2c45 0%, #4e233a 100%);
+  border: 2px solid #6b3552;
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.72),
+    inset 0 1px 0 rgba(244, 239, 230, 0.08);
+  position: relative;
+}
+
+.jq-leather-stitch {
+  border: 2px dashed rgba(176, 138, 110, 0.72);
+  border-radius: 14px;
+}
+
+/* Dark Inner Slot */
+.jq-slot {
+  background-color: var(--jq-slot);
+  border: 2px solid rgba(108, 104, 119, 0.25);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.jq-slot-selected {
+  background-color: var(--jq-slot);
+  border: 2px solid var(--jq-gold);
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.45),
+    0 0 16px rgba(229, 169, 59, 0.22);
+}
+
+/* Stone Header Plaque & Leather Belt */
+.jq-belt-strap {
+  background: linear-gradient(180deg, #7c4c43 0%, #633932 100%);
+  border: 2px solid #4c2a24;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+
+.jq-stone-plaque {
+  background: linear-gradient(180deg, #2e2940 0%, #221d2f 100%);
+  border: 2px solid #6c6877;
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* Flat Rounded Crimson Primary CTA */
+.jq-btn-crimson {
+  background: linear-gradient(180deg, #d8230e 0%, #ba1806 100%);
+  color: var(--jq-ivory);
+  border-bottom: 4px solid #861003;
+  transition: transform 110ms ease, filter 110ms ease;
+}
+
+.jq-btn-crimson:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.jq-btn-crimson:active:not(:disabled) {
+  transform: translateY(1px);
+  border-bottom-width: 2px;
+}
+
+.jq-btn-crimson:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Flat Rounded Stone Secondary Button */
+.jq-btn-stone {
+  background: linear-gradient(180deg, #312c44 0%, #231e31 100%);
+  color: var(--jq-ivory);
+  border: 1.5px solid #575266;
+  border-bottom: 3px solid #161321;
+  transition: transform 110ms ease, border-color 110ms ease, background 110ms ease;
+}
+
+.jq-btn-stone:hover:not(:disabled) {
+  border-color: var(--jq-gold);
+  transform: translateY(-1px);
+}
+
+.jq-btn-stone:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Subtle custom scrollbars for code drawer */
+.jq-scroll::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.jq-scroll::-webkit-scrollbar-track {
+  background: #140d15;
+  border-radius: 999px;
+}
+
+.jq-scroll::-webkit-scrollbar-thumb {
+  background: #6c6877;
+  border-radius: 999px;
+}
+
+.jq-scroll::-webkit-scrollbar-thumb:hover {
+  background: #b08a6e;
+}
+
+@keyframes jq-pulse-gold {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(229, 169, 59, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(229, 169, 59, 0);
+  }
+}
+
+.animate-pulse-gold {
+  animation: jq-pulse-gold 1.6s infinite;
+}
+
+@keyframes jq-heart-break {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.3) rotate(-12deg); }
+  55% { transform: scale(0.8) rotate(12deg); }
+  100% { transform: scale(1); }
+}
+
+.animate-heart-break {
+  animation: jq-heart-break 420ms ease-out;
+}
+
+@keyframes jq-modal-in {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.jq-modal-in {
+  animation: jq-modal-in 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes jq-float-soft {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-float-soft {
+  animation: jq-float-soft 2.6s ease-in-out infinite;
+}
