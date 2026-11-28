@@ -77,6 +77,13 @@ export interface DesafioAndar {
   blocosCorretos: string[];
   /** Blocos embaralhados exibidos ao jogador */
   blocosEmbaralhados: BlocoCodigo[];
+  /**
+   * Código com as lacunas no formato `{{LACUNA_1}}` (vem do backend). Quando existe,
+   * o painel mostra o código inteiro e cada bloco é encaixado na sua lacuna.
+   */
+  templateCodigo?: string;
+  /** Ids das lacunas na ordem do template (ex.: ["LACUNA_1", "LACUNA_2"]) */
+  lacunas?: string[];
   inimigo: InimigoArena;
   xpRecompensa: number;
   acoesEsperadas: TipoAcaoHeroi[];

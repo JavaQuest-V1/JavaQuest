@@ -163,14 +163,31 @@ export function useGameplayController(props: GameplayScreenProps) {
       setIsHintModalOpen(false);
       timer.resetFloorTimer();
 
-      const { desafio: novoDesafio, progresso: novoProgresso } =
-        await combateService.iniciarAndar(
+      let aberto;
+      try {
+        aberto = await combateService.iniciarAndar(
           playerEmail,
           numeroAndar,
           evitarVariacaoAnterior
         );
+      } catch (err) {
+        // Backend é a fonte da verdade: sem resposta do servidor não abre o andar
+        setPhase("ASSEMBLING");
+        setIsDrawerOpen(true);
+        setConsoleLog({
+          tone: "error",
+          text:
+            err instanceof Error
+              ? err.message
+              : "Não foi possível abrir o andar no servidor.",
+        });
+        return;
+      }
+      const { desafio: novoDesafio, progresso: novoProgresso } = aberto;
 
       setDesafio(novoDesafio);
+      // Com template: uma posição fixa por lacuna ("" = lacuna vazia)
+      setSelectedBlockIds(novoDesafio.lacunas ? novoDesafio.lacunas.map(() => "") : []);
       setProgresso(novoProgresso);
       setPhase("ASSEMBLING");
       setIsDrawerOpen(true);
@@ -187,16 +204,29 @@ export function useGameplayController(props: GameplayScreenProps) {
     initializedRef.current = true;
 
     void (async () => {
-      const initial = await combateService.inicializarSessao({
-        email: playerEmail,
-        apelido: playerNickname,
-        andarInicial: initialFloor,
-        checkpointInicial: initialCheckpoint,
-        armamentoInicial: initialWeapon,
-        xpInicial: initialXp,
-        streakInicial: initialStreak,
-        forceReset: true,
-      });
+      let initial: ProgressoJogadorDTO;
+      try {
+        initial = await combateService.inicializarSessao({
+          email: playerEmail,
+          apelido: playerNickname,
+          andarInicial: initialFloor,
+          checkpointInicial: initialCheckpoint,
+          armamentoInicial: initialWeapon,
+          xpInicial: initialXp,
+          streakInicial: initialStreak,
+          forceReset: true,
+          modoTreino: Boolean(props.practiceMode),
+        });
+      } catch (err) {
+        setConsoleLog({
+          tone: "error",
+          text:
+            err instanceof Error
+              ? err.message
+              : "Não foi possível carregar seu progresso do servidor.",
+        });
+        return;
+      }
       setProgresso(initial);
       if (props.skipPreCombatModal) {
         await loadFloor(initial.andarAtual, false);
@@ -211,6 +241,7 @@ export function useGameplayController(props: GameplayScreenProps) {
     loadFloor,
     playerEmail,
     playerNickname,
+    props.practiceMode,
     props.skipPreCombatModal,
   ]);
 
@@ -222,13 +253,28 @@ export function useGameplayController(props: GameplayScreenProps) {
     [loadFloor, progresso.andarAtual]
   );
 
-  const selectedBlocks = useMemo<BlocoCodigo[]>(() => {
-    if (!desafio) return [];
-    const byId = new Map(desafio.blocosEmbaralhados.map((b) => [b.id, b]));
-    return selectedBlockIds
-      .map((id) => byId.get(id))
-      .filter((b): b is BlocoCodigo => Boolean(b));
-  }, [desafio, selectedBlockIds]);
+  /** true quando o desafio traz o código com lacunas (montagem por posição). */
+  const modoLacunas = Boolean(desafio?.lacunas && desafio.lacunas.length > 0);
+
+  const blocksById = useMemo(
+    () => new Map((desafio?.blocosEmbaralhados ?? []).map((b) => [b.id, b])),
+    [desafio]
+  );
+
+  /** Blocos posicionados (sem as lacunas vazias), na ordem do código. */
+  const selectedBlocks = useMemo<BlocoCodigo[]>(
+    () =>
+      selectedBlockIds
+        .map((id) => blocksById.get(id))
+        .filter((b): b is BlocoCodigo => Boolean(b)),
+    [blocksById, selectedBlockIds]
+  );
+
+  /** Uma entrada por lacuna do template: o bloco encaixado ou `null`. */
+  const slotBlocks = useMemo<(BlocoCodigo | null)[]>(
+    () => (modoLacunas ? selectedBlockIds.map((id) => blocksById.get(id) ?? null) : []),
+    [blocksById, modoLacunas, selectedBlockIds]
+  );
 
   const availableBlocks = useMemo<BlocoCodigo[]>(() => {
     if (!desafio) return [];
@@ -236,27 +282,49 @@ export function useGameplayController(props: GameplayScreenProps) {
     return desafio.blocosEmbaralhados.filter((b) => !chosen.has(b.id));
   }, [desafio, selectedBlockIds]);
 
+  const canEditBlocks = phase === "ASSEMBLING" && !isSubmitting;
+
+  /**
+   * Encaixa um bloco. Com lacunas: na posição `slotIndex` (ou na primeira vazia);
+   * se a lacuna já tinha bloco, ele volta para a bandeja. Sem lacunas: vai pro fim.
+   */
   const addBlock = useCallback(
-    (blockId: string) => {
-      if (phase !== "ASSEMBLING" || isSubmitting) return;
-      setSelectedBlockIds((prev) => (prev.includes(blockId) ? prev : [...prev, blockId]));
+    (blockId: string, slotIndex?: number) => {
+      if (!canEditBlocks) return;
+      setSelectedBlockIds((prev) => {
+        if (!modoLacunas) {
+          if (prev.includes(blockId)) return prev;
+          return [...prev, blockId];
+        }
+        const next = prev.map((id) => (id === blockId ? "" : id));
+        const target =
+          slotIndex !== undefined && slotIndex >= 0 && slotIndex < next.length
+            ? slotIndex
+            : next.findIndex((id) => !id);
+        if (target < 0) return prev;
+        next[target] = blockId;
+        return next;
+      });
       audio.playBlockSnap();
     },
-    [audio, isSubmitting, phase]
+    [audio, canEditBlocks, modoLacunas]
   );
 
   const removeBlock = useCallback(
     (blockId: string) => {
-      if (phase !== "ASSEMBLING" || isSubmitting) return;
-      setSelectedBlockIds((prev) => prev.filter((id) => id !== blockId));
+      if (!canEditBlocks) return;
+      setSelectedBlockIds((prev) =>
+        modoLacunas ? prev.map((id) => (id === blockId ? "" : id)) : prev.filter((id) => id !== blockId)
+      );
       audio.playBlockRemove();
     },
-    [audio, isSubmitting, phase]
+    [audio, canEditBlocks, modoLacunas]
   );
 
+  /** Sem lacunas: reordena a lista. Com lacunas: troca o conteúdo de duas lacunas. */
   const reorderSelectedBlocks = useCallback(
     (fromIndex: number, toIndex: number) => {
-      if (phase !== "ASSEMBLING" || isSubmitting) return;
+      if (!canEditBlocks) return;
       if (fromIndex === toIndex) return;
       setSelectedBlockIds((prev) => {
         if (
@@ -268,30 +336,46 @@ export function useGameplayController(props: GameplayScreenProps) {
           return prev;
         }
         const copy = [...prev];
+        if (modoLacunas) {
+          [copy[fromIndex], copy[toIndex]] = [copy[toIndex], copy[fromIndex]];
+          return copy;
+        }
         const [moved] = copy.splice(fromIndex, 1);
         copy.splice(toIndex, 0, moved);
         return copy;
       });
       audio.playBlockSnap();
     },
-    [audio, isSubmitting, phase]
+    [audio, canEditBlocks, modoLacunas]
   );
 
   const clearSelectedBlocks = useCallback(() => {
-    if (phase !== "ASSEMBLING" || isSubmitting) return;
-    if (selectedBlockIds.length === 0) return;
-    setSelectedBlockIds([]);
+    if (!canEditBlocks) return;
+    if (selectedBlocks.length === 0) return;
+    setSelectedBlockIds((prev) => (modoLacunas ? prev.map(() => "") : []));
     audio.playBlockRemove();
-  }, [audio, isSubmitting, phase, selectedBlockIds.length]);
+  }, [audio, canEditBlocks, modoLacunas, selectedBlocks.length]);
 
+  /** Backspace: tira o último bloco encaixado. */
   const undoLastBlock = useCallback(() => {
-    if (phase !== "ASSEMBLING" || isSubmitting) return;
+    if (!canEditBlocks) return;
     setSelectedBlockIds((prev) => {
-      if (prev.length === 0) return prev;
+      if (!modoLacunas) {
+        if (prev.length === 0) return prev;
+        audio.playBlockRemove();
+        return prev.slice(0, -1);
+      }
+      let last = -1;
+      prev.forEach((id, i) => {
+        if (id) last = i;
+      });
+      if (last < 0) return prev;
       audio.playBlockRemove();
-      return prev.slice(0, -1);
+      const next = [...prev];
+      next[last] = "";
+      return next;
     });
-  }, [audio, isSubmitting, phase]);
+  }, [audio, canEditBlocks, modoLacunas]);
 
   const executeTurn = useCallback(async () => {
     if (!desafio || phase !== "ASSEMBLING" || isSubmitting) return;
@@ -314,9 +398,17 @@ export function useGameplayController(props: GameplayScreenProps) {
           numeroAndar: desafio.numeroAndar,
           blocosMontados: blocosTextos,
           codigoJava: blocosTextos.join(" "),
+          // Com lacunas vai a posição exata de cada bloco (lacuna vazia = "")
+          blocosIds: modoLacunas ? selectedBlockIds : selectedBlocks.map((b) => b.id),
+          xpRecompensa: desafio.xpRecompensa,
         });
 
       setLastResult(resultado);
+
+      // O gabarito só existe no servidor: após o acerto mostra o código validado por ele
+      if (resultado.vitoriaTurno && resultado.submissao.codigoJava) {
+        setDesafio((d) => (d ? { ...d, codigoCorreto: resultado.submissao.codigoJava } : d));
+      }
 
       if (resultado.vitoriaTurno) {
         setPhase("ANIMATING_HERO_ATTACK");
@@ -432,6 +524,8 @@ export function useGameplayController(props: GameplayScreenProps) {
     progresso.vidasGastasNoCiclo,
     props,
     scheduleTimeout,
+    modoLacunas,
+    selectedBlockIds,
     selectedBlocks,
   ]);
 
@@ -462,20 +556,34 @@ export function useGameplayController(props: GameplayScreenProps) {
   }, [loadFloor, progresso.andarAtual]);
 
   const restartFromCheckpoint = useCallback(async () => {
-    const restaurado = await checkpointService.retomarUltimoCheckpoint(playerEmail);
-    setProgresso(restaurado);
-    await loadFloor(restaurado.andarAtual, true);
+    try {
+      const restaurado = await checkpointService.retomarUltimoCheckpoint(playerEmail);
+      setProgresso(restaurado);
+      await loadFloor(restaurado.andarAtual, true);
+    } catch (err) {
+      setConsoleLog({
+        tone: "error",
+        text: err instanceof Error ? err.message : "Não foi possível voltar ao checkpoint.",
+      });
+    }
   }, [loadFloor, playerEmail]);
 
   const switchWeapon = useCallback(
     async (novoArmamento: TipoArmamento) => {
       if (progresso.andarEmAndamento) return;
-      const atualizado = await checkpointService.trocarArmamentoNoCheckpoint(
-        playerEmail,
-        novoArmamento
-      );
-      setProgresso(atualizado);
-      audio.playBlockSnap();
+      try {
+        const atualizado = await checkpointService.trocarArmamentoNoCheckpoint(
+          playerEmail,
+          novoArmamento
+        );
+        setProgresso(atualizado);
+        audio.playBlockSnap();
+      } catch (err) {
+        setConsoleLog({
+          tone: "error",
+          text: err instanceof Error ? err.message : "A troca de armamento não é permitida agora.",
+        });
+      }
     },
     [audio, playerEmail, progresso.andarEmAndamento]
   );
@@ -541,6 +649,7 @@ export function useGameplayController(props: GameplayScreenProps) {
     setIsDrawerOpen,
     toggleDrawer: () => setIsDrawerOpen((v) => !v),
     selectedBlocks,
+    slotBlocks,
     availableBlocks,
     addBlock,
     removeBlock,

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   BookOpen,
   ChevronLeft,
@@ -20,6 +20,7 @@ import {
   JavaSyntaxHighlight,
   StitchedLeatherPanel,
 } from "../ui/DesignSystemPrimitives";
+import { DRAG_BLOCO, DRAG_LACUNA, TemplateCodeEditor } from "./TemplateCodeEditor";
 
 interface CodeBlocksDrawerProps {
   isOpen: boolean;
@@ -28,8 +29,10 @@ interface CodeBlocksDrawerProps {
   progresso: ProgressoJogadorDTO;
   desafio: DesafioAndar | null;
   selectedBlocks: BlocoCodigo[];
+  /** Com código de lacunas: o bloco de cada lacuna (ou null). */
+  slotBlocks?: (BlocoCodigo | null)[];
   availableBlocks: BlocoCodigo[];
-  onAddBlock: (id: string) => void;
+  onAddBlock: (id: string, slotIndex?: number) => void;
   onRemoveBlock: (id: string) => void;
   onReorderBlocks: (fromIndex: number, toIndex: number) => void;
   onClearBlocks: () => void;
@@ -51,6 +54,7 @@ export function CodeBlocksDrawer({
   progresso,
   desafio,
   selectedBlocks,
+  slotBlocks = [],
   availableBlocks,
   onAddBlock,
   onRemoveBlock,
@@ -69,6 +73,22 @@ export function CodeBlocksDrawer({
   const isAssembling = phase === "ASSEMBLING";
   const allBlocksPlaced =
     desafio !== null && selectedBlocks.length === desafio.blocosCorretos.length;
+  const temLacunas = Boolean(desafio?.templateCodigo && desafio.lacunas?.length);
+  const podeEditar = isAssembling && !isSubmitting;
+
+  // Lacuna escolhida pelo jogador: o próximo bloco clicado vai para ela
+  const [lacunaAtiva, setLacunaAtiva] = useState<number | null>(null);
+  const [bandejaSobre, setBandejaSobre] = useState(false);
+  useEffect(() => setLacunaAtiva(null), [desafio?.id]);
+
+  const escolherBloco = (blockId: string) => {
+    if (temLacunas && lacunaAtiva !== null) {
+      onAddBlock(blockId, lacunaAtiva);
+      setLacunaAtiva(null);
+      return;
+    }
+    onAddBlock(blockId);
+  };
 
   return (
     <>
@@ -146,6 +166,23 @@ export function CodeBlocksDrawer({
                   )}
                 </div>
 
+                {temLacunas && desafio?.templateCodigo ? (
+                  <TemplateCodeEditor
+                    template={desafio.templateCodigo}
+                    lacunas={desafio.lacunas ?? []}
+                    slotBlocks={slotBlocks}
+                    editavel={podeEditar}
+                    completo={allBlocksPlaced}
+                    lacunaAtiva={lacunaAtiva}
+                    onSelecionarLacuna={setLacunaAtiva}
+                    onEncaixar={(id, indice) => {
+                      onAddBlock(id, indice);
+                      setLacunaAtiva(null);
+                    }}
+                    onTrocarLacunas={onReorderBlocks}
+                    onRemover={onRemoveBlock}
+                  />
+                ) : (
                 <div
                   className={`min-h-[84px] rounded-xl border-2 bg-[#0C0810] p-3.5 transition-colors ${
                     allBlocksPlaced
@@ -184,12 +221,36 @@ export function CodeBlocksDrawer({
                     </div>
                   )}
                 </div>
+                )}
               </div>
 
               {/* 3. Blocos Embaralhados */}
-              <div className="jq-slot rounded-xl p-3.5">
+              <div
+                className={`jq-slot rounded-xl p-3.5 transition-colors ${
+                  bandejaSobre ? "ring-2 ring-[#CA1C08]/70" : ""
+                }`}
+                onDragOver={(e) => {
+                  if (!temLacunas || !podeEditar) return;
+                  if (!e.dataTransfer.types.includes(DRAG_LACUNA)) return;
+                  e.preventDefault();
+                  setBandejaSobre(true);
+                }}
+                onDragLeave={() => setBandejaSobre(false)}
+                onDrop={(e) => {
+                  setBandejaSobre(false);
+                  const origem = e.dataTransfer.getData(DRAG_LACUNA);
+                  if (origem === "") return;
+                  e.preventDefault();
+                  const bloco = slotBlocks[Number(origem)];
+                  if (bloco) onRemoveBlock(bloco.id);
+                }}
+              >
                 <div className="mb-2.5 text-xs font-extrabold uppercase tracking-wider text-[#B08A6E]">
-                  Blocos Embaralhados
+                  {temLacunas
+                    ? lacunaAtiva !== null
+                      ? `Escolha o bloco da lacuna ${lacunaAtiva + 1}`
+                      : "Blocos • clique ou arraste até a lacuna"
+                    : "Blocos Embaralhados"}
                 </div>
 
                 {availableBlocks.length === 0 ? (
@@ -202,7 +263,12 @@ export function CodeBlocksDrawer({
                       <button
                         key={block.id}
                         type="button"
-                        onClick={() => onAddBlock(block.id)}
+                        onClick={() => escolherBloco(block.id)}
+                        draggable={temLacunas && podeEditar}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData(DRAG_BLOCO, block.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
                         disabled={!isAssembling || isSubmitting}
                         className="jq-btn-stone cursor-pointer rounded-xl px-3.5 py-2 text-[15px]"
                       >

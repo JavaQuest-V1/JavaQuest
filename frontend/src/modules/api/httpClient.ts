@@ -1,10 +1,13 @@
+import { obterTokenSupabase } from "./supabaseClient";
+
 /**
  * Cliente HTTP/REST único do front Next.js para o backend Java Spring Boot
  * (RNF-02, RNF-03, RNF-10, RNF-13, RNF-21).
  *
  * - Lê a URL base de `NEXT_PUBLIC_API_URL`. Sem URL, o app roda em modo Sandbox.
- * - Guarda o JWT emitido pelo backend e envia `Authorization: Bearer <JWT>`
- *   em todas as chamadas (plataforma e gameplay usam o mesmo cliente).
+ * - Envia `Authorization: Bearer <JWT do Supabase Auth>` em todas as chamadas
+ *   (plataforma e gameplay usam o mesmo cliente). O token vem da sessão do
+ *   Supabase (renovada automaticamente) — o backend é um Resource Server.
  * - Tenta de novo em falhas de rede e publica o status de conexão
  *   (ONLINE / RECONNECTING / OFFLINE / SANDBOX) para o banner de reconexão.
  * - Em HTTP 401, descarta o token e avisa quem estiver ouvindo (sessão expirada).
@@ -26,8 +29,21 @@ export interface RequestOptions<TBody> {
   body?: TBody;
   retries?: number;
   timeoutMs?: number;
-  /** Rotas públicas (ex.: login) não enviam o JWT. */
+  /** Rotas públicas (ex.: saúde) não enviam o JWT. */
   auth?: boolean;
+  /** Headers extras (ex.: `Idempotency-Key` exigido nas submissões). */
+  headers?: Record<string, string>;
+}
+
+/** Gera uma chave para o header `Idempotency-Key` (UUID v4). */
+export function novaChaveIdempotencia(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 export class ApiError extends Error {
@@ -73,10 +89,14 @@ async function readErrorMessage(response: Response): Promise<string> {
   const text = await response.text().catch(() => "");
   if (!text) return `Erro HTTP ${response.status} ao comunicar com o servidor Java.`;
   try {
-    // Formatos comuns do Spring Boot: { message } ou { erro } ou { detail } (ProblemDetail)
+    // Padrão do backend: RespostaErroPadraoApi { mensagemErro, detalhesValidacao }
+    // (também aceita { message } / { erro } / { detail } do Spring Boot)
     const json = JSON.parse(text) as Record<string, unknown>;
-    const msg = json.message ?? json.erro ?? json.detail ?? json.error;
-    if (typeof msg === "string" && msg.trim()) return msg;
+    const msg = json.mensagemErro ?? json.message ?? json.erro ?? json.detail ?? json.error;
+    const detalhes = Array.isArray(json.detalhesValidacao)
+      ? (json.detalhesValidacao as unknown[]).filter((d) => typeof d === "string").join(" ")
+      : "";
+    if (typeof msg === "string" && msg.trim()) return detalhes ? `${msg} ${detalhes}` : msg;
   } catch {
     // corpo não é JSON
   }
@@ -89,6 +109,7 @@ export class ApiClient {
   private statusListeners = new Set<(status: ConnectionStatus) => void>();
   private unauthorizedListeners = new Set<() => void>();
   private currentStatus: ConnectionStatus = "SANDBOX";
+  private tokenProvider: (() => Promise<string | undefined>) | undefined = obterTokenSupabase;
 
   constructor(config?: ApiClientConfig) {
     this.configure(config ?? {});
@@ -125,6 +146,19 @@ export class ApiClient {
   public setAuthToken(token: string | undefined): void {
     this.authToken = token || undefined;
     writeStoredToken(this.authToken);
+  }
+
+  /** Define de onde vem o JWT a cada chamada (padrão: sessão do Supabase Auth). */
+  public setTokenProvider(provider: (() => Promise<string | undefined>) | undefined): void {
+    this.tokenProvider = provider;
+  }
+
+  private async resolveToken(): Promise<string | undefined> {
+    if (this.tokenProvider) {
+      const token = await this.tokenProvider().catch(() => undefined);
+      if (token) return token;
+    }
+    return this.authToken;
   }
 
   public clearAuthToken(): void {
@@ -167,7 +201,14 @@ export class ApiClient {
       throw new ApiError("API REST não configurada (modo Sandbox ativo).", 0);
     }
 
-    const { method = "GET", body, retries = 1, timeoutMs = 4500, auth = true } = options;
+    const {
+      method = "GET",
+      body,
+      retries = 1,
+      timeoutMs = 8000,
+      auth = true,
+      headers: extraHeaders,
+    } = options;
     const url = `${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 
     let lastError: unknown;
@@ -182,9 +223,10 @@ export class ApiClient {
       const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const headers: Record<string, string> = { Accept: "application/json" };
+        const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders };
         if (body !== undefined) headers["Content-Type"] = "application/json";
-        if (auth && this.authToken) headers.Authorization = `Bearer ${this.authToken}`;
+        const token = auth ? await this.resolveToken() : undefined;
+        if (token) headers.Authorization = `Bearer ${token}`;
 
         const response = await fetch(url, {
           method,

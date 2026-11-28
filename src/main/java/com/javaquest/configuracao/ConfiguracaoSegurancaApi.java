@@ -75,7 +75,9 @@ public class ConfiguracaoSegurancaApi {
         return decodificadorNimbus;
     }
 
-    @Bean
+    // o nome "corsConfigurationSource" eh o que o Spring Security procura no .cors(withDefaults());
+    // com outro nome ele cai no CORS vazio do Spring MVC e o navegador bloqueia o front
+    @Bean(name = "corsConfigurationSource")
     public CorsConfigurationSource fonteConfiguracaoCors() {
         List<String> listaOrigensPermitidas = Arrays.stream(origensCorsPermitidasTexto.split(","))
                 .map(String::trim)

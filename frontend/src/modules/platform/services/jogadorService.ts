@@ -1,31 +1,44 @@
 import { API_ROUTES } from "@api/endpoints";
-import { apiClient } from "@api/httpClient";
-import { ProgressoJogadorDTO } from "@gameplay/types/gameplay";
-import { RegistrarOnboardingRequest, TrocarArmamentoRequest } from "../types/api";
+import { apiClient, novaChaveIdempotencia } from "@api/httpClient";
+import {
+  PerfilCompletoJogador,
+  RequisicaoOnboardingJogador,
+  ResultadoTrocaArmamentoCiclo,
+} from "@api/backendTypes";
+import { trilhaCiclosApi } from "@api/trilhaCiclosApi";
+import { TipoArmamento } from "@gameplay/types/gameplay";
 
 /**
  * @service — espelha o `JogadorController` do Spring Boot
- * (RF-02, RF-03, RF-04, RF-07, RF-08). Só HTTP; regras de tela no
- * `useJogadorController`.
+ * (RF-02, RF-03, RF-04, RF-07) e a troca de arma do `TrilhaCiclosController`
+ * (RF-08). Só HTTP; regras de tela no `useJogadorController`.
  */
 export const jogadorService = {
-  async registrarOnboarding(payload: RegistrarOnboardingRequest): Promise<void> {
-    await apiClient.requestJson<void, RegistrarOnboardingRequest>(
+  async obterPerfil(): Promise<PerfilCompletoJogador> {
+    return apiClient.requestJson<PerfilCompletoJogador>(API_ROUTES.jogador.obterPerfil());
+  },
+
+  async registrarOnboarding(payload: RequisicaoOnboardingJogador): Promise<PerfilCompletoJogador> {
+    return apiClient.requestJson<PerfilCompletoJogador, RequisicaoOnboardingJogador>(
       API_ROUTES.jogador.registrarOnboarding(),
-      { method: "POST", body: payload }
+      {
+        method: "POST",
+        body: payload,
+        headers: { "Idempotency-Key": novaChaveIdempotencia() },
+        retries: 0,
+      }
     );
   },
 
-  async trocarArmamento(payload: TrocarArmamentoRequest): Promise<ProgressoJogadorDTO | undefined> {
-    return apiClient.requestJson<ProgressoJogadorDTO | undefined, TrocarArmamentoRequest>(
-      API_ROUTES.jogador.trocarArmamento(),
-      { method: "PATCH", body: payload }
-    );
+  async atualizarApelido(novoApelidoHeroi: string): Promise<PerfilCompletoJogador> {
+    return apiClient.requestJson<PerfilCompletoJogador>(API_ROUTES.jogador.atualizarApelido(), {
+      method: "PATCH",
+      body: { novoApelidoHeroi },
+    });
   },
 
-  async carregarProgresso(email: string): Promise<ProgressoJogadorDTO> {
-    return apiClient.requestJson<ProgressoJogadorDTO>(
-      API_ROUTES.jogador.carregarProgresso(email)
-    );
+  /** RF-08: só troca no backend se houver run em PREPARING; ACTIVE -> 409. */
+  async trocarArmamento(arma: TipoArmamento): Promise<ResultadoTrocaArmamentoCiclo | null> {
+    return trilhaCiclosApi.trocarArmamentoForaDeCombate(arma);
   },
 };

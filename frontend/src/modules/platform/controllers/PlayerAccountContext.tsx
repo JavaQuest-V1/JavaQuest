@@ -16,6 +16,7 @@ import {
 } from "@gameplay/types/gameplay";
 import { callApi } from "@api/callApi";
 import { apiClient } from "@api/httpClient";
+import { sessaoEstudo } from "@api/sessaoEstudo";
 import {
   accountService,
   DEFAULT_ACCOUNT_STATE,
@@ -52,6 +53,8 @@ interface PlayerAccountContextValue {
   loginWithGoogleToken: (
     googleIdToken: string
   ) => Promise<{ destino: "ONBOARDING" | "TRILHA"; erro?: string }>;
+  /** Backend: sincroniza a sessão Supabase (Google) com `POST /autenticacao/sessao`. */
+  loginWithSupabaseSession: () => Promise<{ destino: "ONBOARDING" | "TRILHA"; erro?: string }>;
   completeOnboarding: (payload: {
     apelido: string;
     nivelExperiencia: NivelExperiencia;
@@ -63,7 +66,9 @@ interface PlayerAccountContextValue {
   switchWeapon: (arma: TipoArmamento) => Promise<ActionResult>;
   refreshRanking: () => Promise<void>;
   /** Aplica dados vindos do backend (MySQL) sobre o cache local — RF-22 */
-  syncFromServer: (patch: Partial<PlayerAccountState>) => void;
+  syncFromServer: (
+    patch: Partial<PlayerAccountState> | ((prev: PlayerAccountState) => PlayerAccountState)
+  ) => void;
   markTopicStudied: (topicId: string) => void;
   claimTrailChest: (chestId: string, bonusXp: number) => boolean;
   recordTurnMistake: () => void;
@@ -119,6 +124,16 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
       setIsTutorialOpen(true);
     }
     void refreshRanking();
+
+    // Com backend: a conta local só vale se ainda houver sessão no Supabase Auth
+    if (apiClient.isApiMode() && loaded.autenticado) {
+      void autenticacaoService.possuiSessaoAtiva().then((ativa) => {
+        if (!ativa) {
+          setIsTutorialOpen(false);
+          setAccount((prev) => accountService.save({ ...prev, autenticado: false }));
+        }
+      });
+    }
   }, [refreshRanking]);
 
   const updateAccount = useCallback(
@@ -143,8 +158,8 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
   );
 
   const syncFromServer = useCallback(
-    (patch: Partial<PlayerAccountState>) => {
-      updateAccount((prev) => ({ ...prev, ...patch }));
+    (patch: Partial<PlayerAccountState> | ((prev: PlayerAccountState) => PlayerAccountState)) => {
+      updateAccount((prev) => (typeof patch === "function" ? patch(prev) : { ...prev, ...patch }));
     },
     [updateAccount]
   );
@@ -167,16 +182,9 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
         !account.onboardingConcluido ||
         account.email.toLowerCase() !== cleanEmail;
 
-      const api = await callApi(() =>
-        autenticacaoService.entrarComGoogle({
-          email: cleanEmail,
-          nome: cleanName,
-          forceNew: isNew,
-        })
-      );
-      if (!api.ok) return { destino: "ONBOARDING" as const, erro: api.erro };
-
-      if (isNew || api.data?.primeiroAcesso === true) {
+      // Modo Sandbox (sem backend): login local só para desenvolvimento.
+      // Com backend, o login é o OAuth Google do Supabase (loginWithSupabaseSession).
+      if (isNew) {
         const fresh = accountService.buildOnboardingReset(cleanEmail, cleanName);
         accountService.save(fresh);
         setAccount(fresh);
@@ -196,17 +204,40 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
     [account.email, account.onboardingConcluido, refreshRanking, updateAccount]
   );
 
+  const loginWithSupabaseSession = useCallback(async (): Promise<{
+    destino: "ONBOARDING" | "TRILHA";
+    erro?: string;
+  }> => {
+    try {
+      const res = await autenticacaoService.sincronizarSessao();
+      sessaoEstudo.definir(res.identificadorSessaoEstudoAtiva);
+      const next = accountService.fromSincronizacao(accountService.load(), res);
+      accountService.save(next);
+      setAccount(next);
+      void refreshRanking();
+      if (res.onboardingPendente) return { destino: "ONBOARDING" };
+      if (!next.tutorialConcluido) setIsTutorialOpen(true);
+      return { destino: "TRILHA" };
+    } catch (err) {
+      return {
+        destino: "ONBOARDING",
+        erro:
+          err instanceof Error
+            ? err.message
+            : "Não foi possível sincronizar sua conta com o servidor.",
+      };
+    }
+  }, [refreshRanking]);
+
+  /** Modo Sandbox: ID Token do Google Identity Services decodificado localmente. */
   const loginWithGoogleToken = useCallback(
     async (
       googleIdToken: string
     ): Promise<{ destino: "ONBOARDING" | "TRILHA"; erro?: string }> => {
-      const api = await callApi(() => autenticacaoService.entrarComGoogle({ googleIdToken }));
-      if (!api.ok) return { destino: "ONBOARDING", erro: api.erro };
-      const apiRes = api.data;
       const decoded = decodeJwtPayload(googleIdToken);
 
-      const email = (apiRes?.email ?? decoded?.email ?? "").trim().toLowerCase();
-      const nome = (apiRes?.nome ?? decoded?.name ?? "").trim();
+      const email = (decoded?.email ?? "").trim().toLowerCase();
+      const nome = (decoded?.name ?? "").trim();
 
       if (!email) {
         return {
@@ -216,7 +247,6 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
       }
 
       const isNew =
-        apiRes?.primeiroAcesso === true ||
         !account.onboardingConcluido ||
         account.email.toLowerCase() !== email;
 
@@ -250,22 +280,37 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
     }): Promise<ActionResult> => {
       const api = await callApi(() =>
         jogadorService.registrarOnboarding({
-          email: account.email,
-          nome: account.nomeGoogle || payload.apelido,
-          apelido: payload.apelido,
+          apelidoHeroi: payload.apelido,
           nivelExperiencia: payload.nivelExperiencia,
           canalAquisicao: payload.canalAquisicao,
-          armamentoAtual: payload.armamentoAtual,
+          tipoArmamentoInicial: payload.armamentoAtual,
         })
       );
       if (!api.ok) return { ok: false, erro: api.erro };
 
-      updateAccount((prev) => accountService.applyOnboarding(prev, payload));
+      if (api.data) {
+        // Backend é a fonte: o jogador começa no checkpoint devolvido pelo servidor.
+        // PRÓXIMA ATUALIZAÇÃO NO BACK: "NIVELAMENTO" (começar no Andar 6) ainda é só do front.
+        const perfil = api.data;
+        updateAccount((prev) =>
+          accountService.mergeBackend(
+            { ...prev, armamentoAtual: payload.armamentoAtual },
+            {
+              email: perfil.emailContaGoogle,
+              nomeGoogle: perfil.nomeCompletoContaGoogle,
+              onboardingPendente: false,
+              perfil: perfil.perfilComProgresso,
+            }
+          )
+        );
+      } else {
+        updateAccount((prev) => accountService.applyOnboarding(prev, payload));
+      }
       setIsTutorialOpen(true);
       void refreshRanking();
       return { ok: true };
     },
-    [account.email, account.nomeGoogle, refreshRanking, updateAccount]
+    [refreshRanking, updateAccount]
   );
 
   const logout = useCallback(async () => {
@@ -274,26 +319,24 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
       ...prev,
       autenticado: false,
     }));
-    await autenticacaoService.sair().catch(() => undefined);
+    await autenticacaoService.sair(sessaoEstudo.obter()).catch(() => undefined);
+    sessaoEstudo.definir(null);
   }, [updateAccount]);
 
   const switchWeapon = useCallback(
     async (arma: TipoArmamento): Promise<ActionResult> => {
       if (arma === account.armamentoAtual) return { ok: true };
-      if (account.email) {
-        // RF-08 / RNF-11: o backend decide se a troca é permitida (ex.: 409 em combate)
-        const api = await callApi(() =>
-          jogadorService.trocarArmamento({ email: account.email, armamento: arma })
-        );
-        if (!api.ok) return { ok: false, erro: api.erro };
-      }
+      // RF-08 / RNF-11: o backend decide se a troca é permitida (409 com run ACTIVE).
+      // Sem run aberta, a arma escolhida vale para a próxima run preparada.
+      const api = await callApi(() => jogadorService.trocarArmamento(arma));
+      if (!api.ok) return { ok: false, erro: api.erro };
       updateAccount((prev) => ({
         ...prev,
         armamentoAtual: arma,
       }));
       return { ok: true };
     },
-    [account.armamentoAtual, account.email, updateAccount]
+    [account.armamentoAtual, updateAccount]
   );
 
   const markTopicStudied = useCallback(
@@ -314,6 +357,7 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
     [updateAccount]
   );
 
+  // PRÓXIMA ATUALIZAÇÃO NO BACK: baús da trilha (XP bônus + dica extra) só existem no front.
   const claimTrailChest = useCallback(
     (chestId: string, bonusXp: number): boolean => {
       if (account.bausResgatados.includes(chestId)) return false;
@@ -340,6 +384,8 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
     }));
   }, [updateAccount]);
 
+  // PRÓXIMA ATUALIZAÇÃO NO BACK: XP, missões diárias e combos são calculados só no front.
+  // Andar, checkpoint, vidas e dicas chegam do backend dentro de `resultado`.
   const syncFloorVictory = useCallback(
     (resultado: ResultadoTurnoDTO, isPracticeMode = false) => {
       updateAccount((prev) => {
@@ -476,6 +522,7 @@ export function PlayerAccountProvider({ children }: { children: React.ReactNode 
         conceptMastery,
         loginWithGoogle,
         loginWithGoogleToken,
+        loginWithSupabaseSession,
         completeOnboarding,
         logout,
         switchWeapon,

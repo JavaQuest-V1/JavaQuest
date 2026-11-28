@@ -1,26 +1,31 @@
 # JavaQuest — Contrato REST (Front Next.js ⇄ Backend Spring Boot)
 
-Este arquivo lista as rotas que o front Next.js já consome. O backend Spring Boot
-deve expor estas rotas com estes JSONs. Todas as rotas ficam em um único arquivo no
-front: `src/modules/api/endpoints.ts`. Se o backend mudar algum caminho, basta alterar
-esse arquivo.
+O **backend é a fonte da verdade**. Este arquivo descreve como o front consome os
+`@RestController` da branch `dev` (`src/main/java/com/javaquest/controller`).
+Todas as rotas ficam em um único arquivo no front: `src/modules/api/endpoints.ts`.
+Os tipos JSON (espelho dos records Java) estão em `src/modules/api/backendTypes.ts`.
+
+Funções que ainda existem só no front estão em
+[`PROXIMAS_ATUALIZACOES_BACKEND.md`](./PROXIMAS_ATUALIZACOES_BACKEND.md).
 
 ## Regras gerais
 
-- URL base: `NEXT_PUBLIC_API_URL` no `.env.local` (ex.: `http://localhost:8080`).
-  Sem essa variável, o front roda em **modo Sandbox** (tudo local, sem backend).
-- Formato: JSON (`Content-Type: application/json`).
-- Autenticação: depois do login, o front envia `Authorization: Bearer <tokenJwt>` em
-  todas as rotas, exceto `POST /api/auth/google`.
-- CORS: liberar a origem do front (`http://localhost:3000` em desenvolvimento) e o
-  header `Authorization` (RNF-13).
-- Respostas de erro:
-  - **4xx** = regra de negócio recusada (ex.: 409 troca de arma em combate,
-    422 apelido inválido). O front mostra a mensagem e não aplica a ação.
-    Mande a mensagem em `{ "message": "..." }` (padrão do Spring) ou `{ "erro": "..." }`.
-  - **401** = JWT inválido/expirado. O front apaga o token e volta para `/login`.
-  - **5xx / sem resposta** = o front segue no modo Sandbox e mostra o banner de reconexão.
-- Rotas que não retornam nada podem responder `204 No Content`.
+- URL base: `NEXT_PUBLIC_API_URL` (ex.: `http://localhost:8080`). Sem ela o front
+  roda em **modo Sandbox** (motor local, sem backend).
+- Todas as rotas ficam em `/api/v1` e exigem `Authorization: Bearer <JWT do Supabase Auth>`,
+  exceto `GET /api/v1/saude` e o Swagger (`/swagger-ui.html`).
+- **Login**: o front faz o OAuth Google pelo Supabase Auth (`@supabase/supabase-js`,
+  `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). O backend
+  valida o JWT (ES256/RS256, provedor `google`, sessão ativa). O token é lido da
+  sessão Supabase a cada chamada (renovação automática).
+- `Idempotency-Key` (UUID): enviado em todas as rotas que alteram estado. É
+  **obrigatório** em `POST /tentativas-andar/{id}/submissoes`.
+- Erros: `RespostaErroPadraoApi { codigoStatusHttp, codigoErro, mensagemErro, detalhesValidacao }`.
+  - **4xx** = regra de negócio recusada (ex.: 409 `ARMAMENTO_TRAVADO_NA_RUN`). O front
+    mostra `mensagemErro` e não aplica a ação.
+  - **401** = JWT inválido/expirado: o front volta para `/login`.
+  - **5xx / sem resposta**: no gameplay o erro aparece no console da arena (sem
+    fallback silencioso para o Sandbox, pois o backend é a fonte da verdade).
 
 ## Mapa de controllers
 
@@ -28,100 +33,43 @@ esse arquivo.
 | :--- | :--- | :--- |
 | `AutenticacaoController` | `useAutenticacaoController` | `autenticacaoService` |
 | `JogadorController` | `useJogadorController` | `jogadorService` |
-| `CombateController` | `useCombateController` (módulo gameplay) | `combateService`, `vidasDicasService`, `checkpointService` |
-| `MetricasController` | `useMetricasController` | `metricasDashboardService`, `metricasService` (gameplay) |
+| `TrilhaCiclosController` | `useJogadorController` (arma) / `useCombateController` | `@api/trilhaCiclosApi`, `checkpointService` |
+| `CombateController` | `useCombateController` (módulo gameplay) | `combateService`, `vidasDicasService` |
+| `MetricasController` | `useMetricasController` / `useSessionTimerController` | `metricasDashboardService`, `metricasService` |
 
-## AutenticacaoController (RF-01, RF-05, RNF-10)
+## Rotas consumidas
 
-### `POST /api/auth/google` (pública)
-Request — fluxo oficial (botão Google):
-```json
-{ "googleIdToken": "<ID token do Google>" }
-```
-Request — modo local de testes (sem Client ID):
-```json
-{ "email": "nome@gmail.com", "nome": "Nome Sobrenome", "forceNew": false }
-```
-Response:
-```json
-{ "tokenJwt": "<JWT>", "primeiroAcesso": true, "email": "nome@gmail.com", "nome": "Nome", "fotoPerfil": "https://..." }
-```
-`primeiroAcesso: true` manda o jogador para o onboarding.
+| Método | Rota | Onde o front usa |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/autenticacao/sessao` | Ao voltar do Google em `/login`: cria perfil, abre sessão de estudo, decide onboarding × trilha |
+| `POST` | `/api/v1/autenticacao/logout` | Logout no Perfil (`{ identificadorSessaoEstudo }`) + `supabase.auth.signOut()` |
+| `POST` | `/api/v1/jogadores/eu/onboarding` | Onboarding: `{ apelidoHeroi, nivelExperiencia, canalAquisicao, tipoArmamentoInicial }` |
+| `GET` | `/api/v1/jogadores/eu` | `jogadorService.obterPerfil()` |
+| `PATCH` | `/api/v1/jogadores/eu/apelido` | `jogadorService.atualizarApelido()` (ainda sem tela) |
+| `GET` | `/api/v1/tentativas-ciclo/atual` | Ao entrar na arena e antes de trocar arma (204 = sem run) |
+| `POST` | `/api/v1/tentativas-ciclo` | Abre run `{ numeroCiclo, tipoArmamento }` no 1º andar e após derrota (checkpoint) |
+| `PATCH` | `/api/v1/tentativas-ciclo/{runId}/armamento` | Troca de arma com run em `PREPARING` (RF-08) |
+| `POST` | `/api/v1/tentativas-ciclo/{runId}/andares/iniciar` | Abrir andar (o backend decide o andar e sorteia a variante) |
+| `POST` | `/api/v1/tentativas-andar/{attemptId}/submissoes` | Atacar: `{ blocosEscolhidosPorLacuna: { LACUNA_1: "BLOCO_x", ... } }` |
+| `POST` | `/api/v1/submissoes/{submissionId}/dica` | Dica da última submissão incorreta |
+| `GET` | `/api/v1/metricas/dashboard` | Trilha, Perfil e Ranking (andar, checkpoint, streak, tempo, vitórias) |
+| `POST` | `/api/v1/sessoes-estudo/abrir` | Cronômetro, quando não há sessão de estudo guardada |
+| `POST` | `/api/v1/sessoes-estudo/{id}/eventos-tempo` | Cronômetro a cada 30 s de tempo ativo |
 
-### `POST /api/auth/logout`
-Request: `{ "tokenJwt": "<JWT>" }` · Response: `204`.
+## Adaptações feitas no front (sem mudar as telas)
 
-## JogadorController (RF-02, RF-03, RF-04, RF-07, RF-08)
-
-### `POST /api/jogador/onboarding`
-```json
-{
-  "email": "nome@gmail.com",
-  "nome": "Nome Sobrenome",
-  "apelido": "KELWIN",
-  "nivelExperiencia": "INICIANTE | INTERMEDIARIO | AVANCADO",
-  "canalAquisicao": "YOUTUBE | TIKTOK | INDICACAO | INSTAGRAM | OUTROS",
-  "armamentoAtual": "ESPADA | CAJADO"
-}
-```
-Response: `204` (ou o `ProgressoJogadorDTO`). O front já valida o apelido (2 a 20
-caracteres: letras, números, espaço, `.`, `-`, `_`), mas o backend deve validar também.
-
-### `PATCH /api/jogador/armamento`
-Request: `{ "email": "nome@gmail.com", "armamento": "ESPADA | CAJADO" }`
-Response: `ProgressoJogadorDTO`. Se o jogador estiver com andar em andamento, responder
-`409` com a mensagem (RF-08).
-
-### `GET /api/gameplay/sessao/{email}`
-Response: `ProgressoJogadorDTO`.
-
-## CombateController (RF-11, RF-13, RF-14, RF-17, RF-18, RF-20, RF-21)
-
-### `POST /api/combate/andares/{numeroAndar}/iniciar`
-Request: `{ "email": "nome@gmail.com", "evitarVariacaoAnterior": true }`
-Response: `{ "desafio": DesafioAndar, "progresso": ProgressoJogadorDTO }`
-
-### `POST /api/combate/turno`
-Request:
-```json
-{ "email": "nome@gmail.com", "desafioId": "a4-v2", "numeroAndar": 4, "blocosMontados": ["int x = 5;"], "codigoJava": "int x = 5;" }
-```
-Response: `{ "resultado": ResultadoTurnoDTO, "progresso": ProgressoJogadorDTO }`
-
-### `POST /api/vidas-dicas/dica`
-Request: `{ "email": "nome@gmail.com", "numeroAndar": 4, "categoriaErro": "SINTAXE | LOGICA | METODO | TIPO_DE_DADO" }`
-Response: `{ "dica": DicaPedagogica, "progresso": ProgressoJogadorDTO }` · sem dicas no ciclo: `409`.
-
-### `POST /api/checkpoints/retomar`
-Request: `{ "email": "nome@gmail.com" }` · Response: `ProgressoJogadorDTO`.
-
-## MetricasController (RF-22, RF-23, RF-24)
-
-### `GET /api/metricas/dashboard/{email}` — **rota nova, ainda não existe**
-Enquanto não existir (404), o front usa os dados locais.
-```json
-{
-  "apelido": "KELWIN", "armamentoAtual": "CAJADO", "nivelExperiencia": "INICIANTE",
-  "andarAtual": 4, "checkpointAtual": 1, "xpTotal": 100, "xpSemana": 100,
-  "streakDias": 3, "recordeStreakDias": 5, "tempoEstudoMinutos": 42,
-  "totalTentativas": 8, "totalAcertos": 6, "andaresConcluidos": [1, 2, 3]
-}
-```
-
-### `POST /api/metricas/tempo`
-Request: `{ "email": "...", "segundosSessaoDelta": 30, "segundosNoAndarAtual": 95 }` · Response: `204`.
-
-### `POST /api/metricas/ciclo`
-Request: `{ "email": "...", "andarInicial": 1, "andarFinal": 10, "vidasGastas": 1, "dicasUsadas": 2 }` · Response: `204`.
-
-### `GET /api/ranking`
-Response:
-```json
-[ { "id": "nome@gmail.com", "apelido": "KELWIN", "arma": "CAJADO", "xpSemana": 100 } ]
-```
-
-## DTOs compartilhados
-
-Os tipos completos (`ProgressoJogadorDTO`, `ResultadoTurnoDTO`, `DesafioAndar`,
-`DicaPedagogica`) estão em `src/modules/gameplay/types/gameplay.ts`. Os DTOs da
-plataforma estão em `src/modules/platform/types/api.ts`.
+- **Blocos × lacunas**: a tela continua montando blocos em ordem. O `i`-ésimo bloco
+  escolhido vai para `identificadoresLacunasOrdenados[i]`. O enunciado mostra o
+  template com as lacunas como `___`.
+- **Gabarito**: fica só no servidor. `blocosCorretos` tem o tamanho do número de
+  lacunas (para o "tudo posicionado") e o código correto do modal de vitória é o
+  `codigoJavaMontadoFinal` devolvido após o acerto.
+- **Andar**: quem decide é a run do backend. O andar da URL `/jogar?andar=N` só serve
+  para escolher o ciclo quando não há run aberta (nova run começa no checkpoint 1, 11, 21...).
+- **Vitória no chefe** (`statusRunAtualizado = WON`): a run fecha; o próximo andar
+  prepara automaticamente a run do ciclo seguinte.
+- **Derrota** (`DEFEATED`): "voltar ao checkpoint" prepara uma nova run do mesmo ciclo.
+- **Arma**: com run `PREPARING` troca no backend; com `ACTIVE` o front mostra a recusa;
+  sem run, a arma escolhida é usada quando a próxima run for preparada.
+- **Visual do inimigo** (arquétipo, cor, fala) continua do catálogo do front; o nome vem
+  de `inimigosDoAndar`.

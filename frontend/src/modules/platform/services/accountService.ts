@@ -1,5 +1,19 @@
 import { NivelExperiencia, TipoArmamento } from "@gameplay/types/gameplay";
 import {
+  RegistroMetricasConsolidadasJogador,
+  RegistroPerfilComProgresso,
+  RegistroTentativaCiclo,
+  ResultadoSincronizacaoGoogle,
+  ResumoDashboardJogador,
+} from "@api/backendTypes";
+import {
+  andarCheckpointDoCiclo,
+  andaresAntesDe,
+  armamentoParaTela,
+  canalParaTela,
+  nivelParaTela,
+} from "@api/mapeadores";
+import {
   CanalAquisicao,
   GrimoireTopicCard,
   PlayerAccountState,
@@ -239,6 +253,108 @@ export const accountService = {
       andarAtual: startFloor,
       checkpointAtual: 1,
       andaresConcluidos: completed,
+    });
+  },
+
+  /**
+   * Aplica o estado oficial do backend (fonte da verdade) sobre o cache local.
+   * Campos que só existem no front (XP, missões, baús, tutorial, tópicos) são
+   * mantidos — ver "Próximas atualizações no back" em API_CONTRATO.md.
+   */
+  mergeBackend(
+    prev: PlayerAccountState,
+    dados: {
+      email?: string | null;
+      nomeGoogle?: string | null;
+      apelidoSugerido?: string | null;
+      onboardingPendente?: boolean;
+      perfil?: RegistroPerfilComProgresso | null;
+      tentativa?: RegistroTentativaCiclo | null;
+      metricas?: Pick<
+        RegistroMetricasConsolidadasJogador,
+        "totalVitoriasAndares" | "totalSegundosAtivosEstudo" | "maiorSequenciaDiasAtivos" | "sequenciaAtualDiasAtivos"
+      > | null;
+    }
+  ): PlayerAccountState {
+    const email = (dados.email ?? prev.email ?? "").trim().toLowerCase();
+    // Outro jogador no mesmo navegador: começa do estado limpo
+    const base = email && prev.email && prev.email !== email ? DEFAULT_ACCOUNT_STATE : prev;
+
+    const perfil = dados.perfil;
+    const tentativa = dados.tentativa;
+    const metricas = dados.metricas;
+
+    const checkpointAtual = perfil
+      ? andarCheckpointDoCiclo(perfil.maiorCicloDesbloqueado)
+      : base.checkpointAtual;
+    const andarAtual = tentativa?.numeroAndarAtual ?? (perfil ? checkpointAtual : base.andarAtual);
+    const onboardingConcluido =
+      dados.onboardingPendente !== undefined
+        ? !dados.onboardingPendente
+        : perfil
+          ? Boolean(perfil.dataConclusaoOnboarding)
+          : base.onboardingConcluido;
+
+    const totalAcertos = metricas ? metricas.totalVitoriasAndares : base.totalAcertos;
+
+    return {
+      ...base,
+      autenticado: true,
+      onboardingConcluido,
+      email,
+      nomeGoogle: (dados.nomeGoogle ?? base.nomeGoogle ?? "").trim(),
+      apelido: (perfil?.apelidoHeroi || dados.apelidoSugerido || base.apelido || "").toUpperCase(),
+      nivelExperiencia: nivelParaTela(perfil?.nivelExperienciaBanco, base.nivelExperiencia),
+      canalAquisicao: canalParaTela(perfil?.canalAquisicaoBanco, base.canalAquisicao),
+      armamentoAtual: armamentoParaTela(
+        tentativa?.codigoArmamentoFixo ?? perfil?.codigoArmamentoPreferido,
+        base.armamentoAtual
+      ),
+      andarAtual,
+      checkpointAtual,
+      andaresConcluidos: perfil || tentativa ? andaresAntesDe(andarAtual) : base.andaresConcluidos,
+      vidasAtuais: tentativa?.quantidadeVidasRestantes ?? 3,
+      dicasAtuais: tentativa?.quantidadeDicasRestantes ?? 3,
+      streakDias: metricas ? metricas.sequenciaAtualDiasAtivos : base.streakDias,
+      recordeStreakDias: metricas ? metricas.maiorSequenciaDiasAtivos : base.recordeStreakDias,
+      tempoEstudoMinutos: metricas
+        ? Math.floor(metricas.totalSegundosAtivosEstudo / 60)
+        : base.tempoEstudoMinutos,
+      totalAcertos,
+      // PRÓXIMA ATUALIZAÇÃO NO BACK: total de submissões (acertos + erros) no dashboard
+      totalTentativas: Math.max(base.totalTentativas, totalAcertos),
+    };
+  },
+
+  fromSincronizacao(prev: PlayerAccountState, res: ResultadoSincronizacaoGoogle): PlayerAccountState {
+    return this.mergeBackend(prev, {
+      email: res.emailContaGoogle,
+      nomeGoogle: res.nomeCompletoContaGoogle,
+      apelidoSugerido: res.apelidoSugerido,
+      onboardingPendente: res.onboardingPendente,
+      perfil: res.perfilComProgresso,
+      tentativa: res.tentativaAtiva,
+      metricas: res.metricas,
+    });
+  },
+
+  fromDashboard(prev: PlayerAccountState, dto: ResumoDashboardJogador): PlayerAccountState {
+    const perfil: RegistroPerfilComProgresso = {
+      identificadorUnicoJogador: dto.identificadorUnicoJogador,
+      apelidoHeroi: dto.apelidoHeroi,
+      nivelExperienciaBanco: dto.nivelExperiencia,
+      canalAquisicaoBanco: dto.canalAquisicao,
+      codigoAparencia2D: null,
+      codigoArmamentoPreferido: dto.codigoArmamentoPreferido,
+      dataConclusaoOnboarding: null,
+      maiorCicloDesbloqueado: dto.maiorCicloDesbloqueado,
+    };
+    return this.mergeBackend(prev, {
+      // o dashboard só existe para quem já concluiu o onboarding
+      onboardingPendente: !prev.onboardingConcluido,
+      perfil,
+      tentativa: dto.tentativaCicloAberta,
+      metricas: dto,
     });
   },
 };

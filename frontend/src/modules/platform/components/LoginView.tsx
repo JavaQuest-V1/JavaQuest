@@ -47,6 +47,7 @@ export function LoginView() {
     carregando: isLoading,
     erro: errorMsg,
     possuiJornadaSalva: hasSavedJourney,
+    modoBackend,
     entrarComGoogleLocal,
     entrarComTokenGoogle,
   } = useAutenticacaoController();
@@ -58,7 +59,7 @@ export function LoginView() {
 
   // Carrega Google Identity Services oficial quando NEXT_PUBLIC_GOOGLE_CLIENT_ID estiver preenchido
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || typeof window === "undefined") return;
+    if (modoBackend || !GOOGLE_CLIENT_ID || typeof window === "undefined") return;
 
     const initGsi = () => {
       if (!window.google?.accounts?.id || !googleBtnRef.current) return;
@@ -89,7 +90,7 @@ export function LoginView() {
     script.defer = true;
     script.onload = initGsi;
     document.head.appendChild(script);
-  }, [entrarComTokenGoogle]);
+  }, [entrarComTokenGoogle, modoBackend]);
 
   const handleLocalGmailLogin = (forceNew = false) =>
     entrarComGoogleLocal(googleName, googleEmail, forceNew);
@@ -141,12 +142,13 @@ export function LoginView() {
           </div>
 
           {/* Botão Google OAuth 2.0 real quando NEXT_PUBLIC_GOOGLE_CLIENT_ID estiver configurado */}
-          {GOOGLE_CLIENT_ID ? (
+          {!modoBackend && GOOGLE_CLIENT_ID ? (
             <div className="flex flex-col items-center gap-3 py-2">
               <div ref={googleBtnRef} />
             </div>
           ) : (
             <>
+              {!modoBackend && (
               <div className="jq-slot grid grid-cols-1 gap-3 rounded-2xl p-4 text-left sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-[10px] font-extrabold uppercase tracking-widest text-[#B08A6E]">
@@ -176,6 +178,7 @@ export function LoginView() {
                   />
                 </div>
               </div>
+              )}
 
               <button
                 type="button"
@@ -200,6 +203,7 @@ export function LoginView() {
                 </div>
               </button>
 
+              {!modoBackend && (
               <p className="text-[11px] text-[#B08A6E]/80">
                 Modo de desenvolvimento local. Para ativar o popup oficial do Google, defina{" "}
                 <code className="font-code text-[#E5A93B]">
@@ -207,6 +211,7 @@ export function LoginView() {
                 </code>{" "}
                 em <code className="font-code">.env.local</code>.
               </p>
+              )}
             </>
           )}
 
@@ -227,7 +232,7 @@ export function LoginView() {
               </Link>
             )}
 
-            {hasSavedJourney && !GOOGLE_CLIENT_ID && (
+            {hasSavedJourney && !GOOGLE_CLIENT_ID && !modoBackend && (
               <button
                 type="button"
                 onClick={() => void handleLocalGmailLogin(true)}

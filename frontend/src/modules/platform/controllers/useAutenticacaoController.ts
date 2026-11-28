@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiClient } from "@api/httpClient";
+import { autenticacaoService } from "../services/autenticacaoService";
 import { useRouter } from "next/navigation";
 import { usePlayerAccount } from "./PlayerAccountContext";
 
@@ -22,7 +24,9 @@ const ROTA_DESTINO: Record<Destino, string> = {
  */
 export function useAutenticacaoController() {
   const router = useRouter();
-  const { account, loginWithGoogle, loginWithGoogleToken, logout } = usePlayerAccount();
+  const { account, loginWithGoogle, loginWithGoogleToken, loginWithSupabaseSession, logout } =
+    usePlayerAccount();
+  const modoBackend = apiClient.isApiMode();
 
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -37,9 +41,39 @@ export function useAutenticacaoController() {
     return null;
   }, []);
 
-  /** Modo local (sem Client ID do Google): e-mail Gmail + nome. */
+  // Volta do redirect do Google (Supabase Auth): sincroniza a sessão com o backend
+  const sincronizacaoIniciada = useRef(false);
+  useEffect(() => {
+    if (!modoBackend || sincronizacaoIniciada.current) return;
+    sincronizacaoIniciada.current = true;
+    void (async () => {
+      if (!(await autenticacaoService.possuiSessaoAtiva())) return;
+      setCarregando(true);
+      const res = await loginWithSupabaseSession();
+      setCarregando(false);
+      if (res.erro) {
+        setErro(res.erro);
+        return;
+      }
+      router.replace(ROTA_DESTINO[res.destino]);
+    })();
+  }, [loginWithSupabaseSession, modoBackend, router]);
+
+  /** Com backend: OAuth Google do Supabase (redirect). Sem backend: e-mail Gmail + nome. */
   const entrarComGoogleLocal = useCallback(
     async (nome: string, email: string, forcarNovaJornada = false) => {
+      if (modoBackend) {
+        setErro(null);
+        setCarregando(true);
+        try {
+          await autenticacaoService.entrarComGoogle("/login");
+        } catch (err) {
+          setCarregando(false);
+          setErro(err instanceof Error ? err.message : "Falha ao abrir o login do Google.");
+        }
+        return;
+      }
+
       const falha = validarCredenciaisLocais(nome, email);
       if (falha) {
         setErro(falha);
@@ -61,7 +95,7 @@ export function useAutenticacaoController() {
       }
       router.push(ROTA_DESTINO[res.destino]);
     },
-    [loginWithGoogle, possuiJornadaSalva, router, validarCredenciaisLocais]
+    [loginWithGoogle, modoBackend, possuiJornadaSalva, router, validarCredenciaisLocais]
   );
 
   /** Fluxo oficial: ID Token devolvido pelo botão do Google Identity Services. */
@@ -99,6 +133,8 @@ export function useAutenticacaoController() {
     erro,
     setErro,
     possuiJornadaSalva,
+    /** true quando o login usa o Google via Supabase Auth (backend ativo). */
+    modoBackend,
     entrarComGoogleLocal,
     entrarComTokenGoogle,
     sair,

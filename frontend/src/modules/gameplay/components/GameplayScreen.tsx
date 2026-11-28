@@ -76,6 +76,7 @@ export function GameplayScreen(props: GameplayScreenProps) {
           progresso={ctrl.progresso}
           desafio={ctrl.desafio}
           selectedBlocks={ctrl.selectedBlocks}
+          slotBlocks={ctrl.slotBlocks}
           availableBlocks={ctrl.availableBlocks}
           onAddBlock={ctrl.addBlock}
           onRemoveBlock={ctrl.removeBlock}

@@ -9,11 +9,12 @@ import { useGameplayController } from "./useGameplayController";
  *
  * Expõe as ações com os mesmos nomes do diagrama de classes, por cima do
  * `useGameplayController` (estado da arena, animações e áudio):
- * - iniciarAndar         -> POST /api/combate/andares/{n}/iniciar
- * - submeterCodigo       -> POST /api/combate/turno
- * - solicitarDica        -> POST /api/vidas-dicas/dica
- * - retornarAoCheckpoint -> POST /api/checkpoints/retomar
- * - trocarArmamento      -> PATCH /api/jogador/armamento (só fora de andar ativo)
+ * - iniciarAndar         -> POST /api/v1/tentativas-ciclo (se não houver run) +
+ *                           POST /api/v1/tentativas-ciclo/{runId}/andares/iniciar
+ * - submeterCodigo       -> POST /api/v1/tentativas-andar/{attemptId}/submissoes
+ * - solicitarDica        -> POST /api/v1/submissoes/{submissionId}/dica
+ * - retornarAoCheckpoint -> POST /api/v1/tentativas-ciclo (nova run no checkpoint)
+ * - trocarArmamento      -> PATCH /api/v1/tentativas-ciclo/{runId}/armamento (só em PREPARING)
  */
 export function useCombateController(props: GameplayScreenProps) {
   const ctrl = useGameplayController(props);

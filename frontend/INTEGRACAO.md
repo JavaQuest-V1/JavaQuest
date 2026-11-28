@@ -4,20 +4,28 @@ Aplicação web completa do **JavaQuest** em **Next.js 15 + TypeScript + Tailwin
 
 ---
 
-## Como executar localmente (Frontend Next.js + Backend Java real)
+## Como executar localmente (Frontend Next.js + Backend Spring Boot)
 
-1. **Subir o Backend Java** (conectado diretamente às classes reais de `JavaQuest/src/com/javaquest/`):
+1. **Backend** (raiz do repositório, JDK 21+; precisa do `.env` com a senha do banco — ver `.env.example`):
 ```bash
-npm run dev:java
+./mvnw spring-boot:run
 ```
-*(Inicia `JavaQuestApiServer` em `http://localhost:8080`, usando `AutenticacaoService`, `JogadorService`, `CombateService`, `ValidacaoJavaService`, `VidasDicasService`, `CheckpointService` e `MetricasService`.)*
+*(API em `http://localhost:8080/api/v1`, Swagger em `http://localhost:8080/swagger-ui.html`.)*
 
-2. **Subir o Frontend Next.js** (em outro terminal na raiz do workspace):
+2. **Frontend** (pasta `frontend/`): copie `.env.example` para `.env.local`, preencha a
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` e rode:
 ```bash
+npm install
 npm run dev
 ```
 
-Acesse `http://localhost:3000` — o fluxo começa do início (**Login Google → Onboarding → Andar 1 com 0 XP + Tutorial Interativo**). Caso o backend Java não esteja rodando, a camada `@services` alterna automaticamente para o modo Sandbox local sem travar a interface.
+3. **Supabase Auth**: em *Authentication > URL Configuration*, adicione
+   `http://localhost:3000/login` em *Redirect URLs*, e o provedor Google precisa estar ativo.
+
+Acesse `http://localhost:3000` — o fluxo é **Login Google (Supabase) → Onboarding → Trilha → Arena**.
+Sem `NEXT_PUBLIC_API_URL`, o front roda em modo Sandbox (motor local). O contrato das
+rotas está em `API_CONTRATO.md` e o que ainda é só do front em `PROXIMAS_ATUALIZACOES_BACKEND.md`.
+
 - `/` e `/trilha` — **Trilha Guiada** (unidades, nós octogonais, Baú de Runas, Chefe do Andar 10, Checkpoint 11 e widgets laterais)
 - `/jogar` — **Arena de Combate 2.5D Pixel-Art** (tela cheia com painel lateral retrátil de montagem de blocos Java)
 - `/dicas` — **Dicas de Java • Grimório** (`CERTO` vs `ERRO` por categoria + prática direta)
@@ -53,15 +61,4 @@ src/
 
 ## Integração com Backend Java (Spring Boot)
 
-Defina `NEXT_PUBLIC_API_URL=https://sua-api-java` no `.env.local` para alternar automaticamente a camada `@services` do **Modo Sandbox** para requisições REST JSON com `Authorization: Bearer <JWT>`:
-
-| Método | Endpoint | Serviço Java correspondente |
-| :--- | :--- | :--- |
-| `GET` | `/api/gameplay/sessao/{email}` | `JogadorService` |
-| `POST` | `/api/combate/andares/{numeroAndar}/iniciar` | `CombateService` (sorteio anti-memorização RF-20/RF-21) |
-| `POST` | `/api/combate/turno` | `CombateService` + `ValidacaoJavaService` |
-| `POST` | `/api/vidas-dicas/dica` | `VidasDicasService` (máx. 3 dicas por ciclo RF-14) |
-| `POST` | `/api/checkpoints/retomar` | `CheckpointService` (retorno ao checkpoint RF-11) |
-| `PATCH` | `/api/jogador/armamento` | `JogadorService` (trava RF-08 fora de combate) |
-| `POST` | `/api/metricas/tempo` | `MetricasService` (RF-24) |
-| `POST` | `/api/metricas/ciclo` | `MetricasService` (RF-23 / histórico de ciclos) |
+Ver [`API_CONTRATO.md`](./API_CONTRATO.md).
